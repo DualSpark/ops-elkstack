@@ -1,5 +1,6 @@
-from networkbase import NetworkBase
+from environmentbase.networkbase import NetworkBase
 from troposphere import ec2, Tags, Base64
+import pprint
 
 class ElkStack(NetworkBase):
     '''
@@ -7,7 +8,12 @@ class ElkStack(NetworkBase):
     '''
 
     def create_action(self):
+        pp = pprint.PrettyPrinter(indent=2)
         self.initialize_template()
+
+        self.construct_network()
+
+        pp.pprint(self.vpc)
 
         self.create_logstash()
         self.create_kibana()

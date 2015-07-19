@@ -1,5 +1,6 @@
 from environmentbase.networkbase import NetworkBase
 from troposphere import ec2, Tags, Base64, Ref
+from troposphere.ec2 import NetworkInterfaceProperty
 import json
 
 
@@ -12,7 +13,8 @@ class ElkStack(NetworkBase):
         self.initialize_template()
         self.construct_network()
 
-        print self.local_subnets['public']['0'].JSONrepr() # First public subnet
+        # Matthew's debug fun
+        # print self.local_subnets['public']['0'].JSONrepr() # First public subnet
 
         self.create_logstash()
         # self.create_kibana()
@@ -41,8 +43,19 @@ service logstash restart
 # edit /etc/elasticsearch/elasticsearch.yml to change where it listens to.
         '''
 
-        res = ec2.Instance("logstash", InstanceType="m3.medium", ImageId="ami-951945d0",
-            Tags=Tags(Name="logstash",), UserData=Base64(logstash_startup), SubnetId=Ref(self.local_subnets['public']['0'])
+        # instance size dropped to a t2.small for making debugging cheaper.
+        res = ec2.Instance("logstash", InstanceType="t2.small", ImageId="ami-e7527ed7",
+            Tags=Tags(Name="logstash",), UserData=Base64(logstash_startup),
+            KeyName=Ref(self.template.parameters['ec2Key']),
+            # SubnetId=Ref(self.local_subnets['public']['0']),
+            NetworkInterfaces=[
+            NetworkInterfaceProperty(
+                GroupSet=[
+                    Ref(self.common_sg)],
+                AssociatePublicIpAddress='true',
+                DeviceIndex='0',
+                DeleteOnTermination='true',
+                SubnetId=Ref(self.local_subnets['public']['0']))]
             )
 
         self.template.add_resource(res)

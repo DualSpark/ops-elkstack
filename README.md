@@ -3,7 +3,6 @@ Elk Stack demo and deploy
 
 ## Getting Started
 
-
 ### Using a virtual environment to isolate dependencies:
 
 ```bash
@@ -16,10 +15,9 @@ python setup.py develop
 
 Then when working on this project in the future, use `workon elkstack` to activate the configured environment and `deactivate` when you're finished.
 
-
 ### Configuring AWS authentication
 
-If you have the AWS cli installed (`pip install awscli`), then you can run `aws configure` to set up your credentials. 
+If you have the AWS cli installed (`pip install awscli`), then you can run `aws configure` to set up your credentials.
 Otherwise you can manually create the following two files:  
 
 **~/.aws/credentials**
@@ -35,7 +33,6 @@ aws_secret_access_key = SECRET_KEY
 output = json
 region = us-west-2
 ```
-
 
 ## Creating your VPC
 
@@ -61,4 +58,3 @@ From this point, you can simply open a terminal window at the location of this r
 ```bash
 ./elkstack.py create
 ./elkstack.py deploy
-```

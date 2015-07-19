@@ -56,5 +56,5 @@ Next, you'll need to set the configuration values within the file located at con
 From this point, you can simply open a terminal window at the location of this readme file and run the following commands to generate your VPC:
 
 ```bash
-./elkstack.py create
-./elkstack.py deploy
+./src/elkstack.py create
+./src/elkstack.py deploy

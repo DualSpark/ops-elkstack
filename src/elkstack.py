@@ -12,7 +12,7 @@ class ElkStack(NetworkBase):
         self.initialize_template()
         self.construct_network()
 
-        print json.dumps(self.vpc.JSONrepr(), indent=4)
+        print self.vpc.JSONrepr()
 
         # self.create_logstash()
         # self.create_kibana()

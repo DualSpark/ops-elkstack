@@ -1,5 +1,5 @@
 from environmentbase.networkbase import NetworkBase
-from troposphere import ec2, Tags, Base64
+from troposphere import ec2, Tags, Base64, Ref
 import json
 
 
@@ -12,9 +12,9 @@ class ElkStack(NetworkBase):
         self.initialize_template()
         self.construct_network()
 
-        print self.vpc.JSONrepr()
+        print self.local_subnets['public']['0'].JSONrepr() # First public subnet
 
-        # self.create_logstash()
+        self.create_logstash()
         # self.create_kibana()
         # self.create_elasticsearch()
 
@@ -41,9 +41,10 @@ service logstash restart
 # edit /etc/elasticsearch/elasticsearch.yml to change where it listens to.
         '''
 
-        # this resource needs to be dropped into a VPC.  For now, we can use a public subnet.
         res = ec2.Instance("logstash", InstanceType="m3.medium", ImageId="ami-951945d0",
-            Tags=Tags(Name="logstash",), UserData=Base64(logstash_startup))
+            Tags=Tags(Name="logstash",), UserData=Base64(logstash_startup), SubnetId=Ref(self.local_subnets['public']['0'])
+            )
+
         self.template.add_resource(res)
 
     def create_kibana(self):
@@ -94,4 +95,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

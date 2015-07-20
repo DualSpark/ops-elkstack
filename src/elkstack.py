@@ -1,4 +1,22 @@
+"""
+elkstack
+
+Tool bundle manages generation, deployment, and feedback of cloudformation resources.
+
+Usage:
+    elkstack (create|deploy) [--config-file <FILE_LOCATION>] [--debug] [--template-file=<TEMPLATE_FILE>]
+
+Options:
+  -h --help                            Show this screen.
+  -v --version                         Show version.
+  --debug                              Prints parent template to console out.
+  --config-file <CONFIG_FILE>          Name of json configuration file. Default value is config.json
+  --stack-name <STACK_NAME>            User-definable value for the CloudFormation stack being deployed.
+  --template-file=<TEMPLATE_FILE>      Name of template to be either generated or deployed.
+"""
+
 from environmentbase.networkbase import NetworkBase
+from environmentbase.cli import CLI
 from troposphere import ec2, Tags, Base64, Ref, iam, GetAtt, GetAZs, Join
 from troposphere.ec2 import NetworkInterfaceProperty
 from troposphere.iam import Role, InstanceProfile
@@ -8,6 +26,7 @@ import troposphere.elasticloadbalancing as elb
 import json
 import string
 import os
+import docopt
 
 
 class ElkStack(NetworkBase):
@@ -152,7 +171,8 @@ class ElkStack(NetworkBase):
 
 
 def main():
-    ElkStack()
+    cli = CLI(doc=__doc__)
+    ElkStack(cli)
 
 if __name__ == '__main__':
     main()

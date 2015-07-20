@@ -49,7 +49,7 @@ class ElkStack(NetworkBase):
         self.construct_network()
 
         self.elk_config = self.config.get('elk')
-        print json.dumps(self.elk_config, indent=4)
+        # print json.dumps(self.elk_config, indent=4)
 
         # Matthew's debug fun
         # print self.local_subnets['public']['0'].JSONrepr() # First public subnet
@@ -145,7 +145,7 @@ class ElkStack(NetworkBase):
                         FromPort='5601',
                         ToPort='5601',
                         IpProtocol='tcp',
-                        SourceSecurityGroupId=Ref(self.common_sg))], # AWS bug: should be DestinationSecurityGroupId
+                        CidrIp='0.0.0.0/0')], # AWS bug: should be DestinationSecurityGroupId
             SecurityGroupIngress= [ec2.SecurityGroupRule(
                         FromPort='5601',
                         ToPort='5601',
@@ -164,8 +164,9 @@ class ElkStack(NetworkBase):
             NetworkInterfaces=[
             NetworkInterfaceProperty(
                 GroupSet=[
-                    Ref(self.common_sg),
-                    Ref(self.kibana_ingress_sg)],
+                    Ref(self.common_sg),            # common
+                    Ref(self.kibana_ingress_sg),    # users can talk to kibana
+                    Ref(self.elastic_sg)],          # kibana can talk to the ES ELB
                 AssociatePublicIpAddress='true',
                 DeviceIndex='0',
                 DeleteOnTermination='true',

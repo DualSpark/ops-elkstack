@@ -68,7 +68,7 @@ class ElkStack(NetworkBase):
         startup_vars = []
         startup_vars.append(Join('=', ['ELASTICSEARCH_ELB_DNS_NAME', GetAtt(self.elasticsearch_elb, 'DNSName')]))
         # instance size dropped to a t2.small for making debugging cheaper.
-        res = ec2.Instance("logstash", InstanceType="t2.small", ImageId="ami-e7527ed7",
+        logstash = ec2.Instance("logstash", InstanceType="t2.small", ImageId="ami-e7527ed7",
             Tags=Tags(Name="logstash",), UserData=self.build_bootstrap(['src/logstash_bootstrap.sh'], variable_declarations= startup_vars),
             KeyName=Ref(self.template.parameters['ec2Key']),
             IamInstanceProfile=Ref('logstashsqsroleInstancePolicy'),
@@ -82,37 +82,54 @@ class ElkStack(NetworkBase):
                 SubnetId=Ref(self.local_subnets['public']['0']))]
             )
 
-        self.template.add_resource(res)
+        self.template.add_resource(logstash)
 
     def create_kibana(self):
         # this resource needs to be dropped into a VPC.  For now, we can use a public subnet.
-        res = ec2.Instance("kibana", InstanceType="t2.small", ImageId="ami-e7527ed7",
-            Tags=Tags(Name="kibana",), UserData=self.build_bootstrap(['src/kibana_bootstrap.sh']))
-        self.template.add_resource(res)
+        kibana = ec2.Instance("kibana", InstanceType="t2.small", ImageId="ami-e7527ed7",
+            Tags=Tags(Name="kibana",), UserData=self.build_bootstrap(['src/kibana_bootstrap.sh']),
+            NetworkInterfaces=[
+            NetworkInterfaceProperty(
+                GroupSet=[
+                    Ref(self.common_sg)],
+                AssociatePublicIpAddress='true',
+                DeviceIndex='0',
+                DeleteOnTermination='true',
+                SubnetId=Ref(self.local_subnets['public']['0']))])
+
+        self.template.add_resource(kibana)
 
     def create_elasticsearch(self):
         # this resource needs to be dropped into a VPC.  For now, we can use a public subnet.
         elasticsearchinstance = ec2.Instance("es", InstanceType="t2.small", ImageId="ami-e7527ed7",
-            Tags=Tags(Name="es",), UserData=self.build_bootstrap(['src/elasticsearch_bootstrap.sh']))
+            Tags=Tags(Name="es",), UserData=self.build_bootstrap(['src/elasticsearch_bootstrap.sh']),
+            NetworkInterfaces=[
+            NetworkInterfaceProperty(
+                GroupSet=[
+                    Ref(self.common_sg)],
+                AssociatePublicIpAddress='true',
+                DeviceIndex='0',
+                DeleteOnTermination='true',
+                SubnetId=Ref(self.local_subnets['public']['0']))])
+
         self.template.add_resource(elasticsearchinstance)
 
+        instances = []
+        instances.append(elasticsearchinstance)
         # ELB for the instance
         # NEEDS A SECURITY GROUP
         elasticsearch_elb = self.template.add_resource(elb.LoadBalancer(
             'ESELB',
             AccessLoggingPolicy=elb.AccessLoggingPolicy(
-                EmitInterval=5,
-                Enabled=True,
-                S3BucketName="logging",
-                S3BucketPrefix="myELB",
+                Enabled=False,
             ),
-            AvailabilityZones=self.azs, # should be from networkbase
+            Subnets=self.subnets['public'], # should be from networkbase
             ConnectionDrainingPolicy=elb.ConnectionDrainingPolicy(
                 Enabled=True,
                 Timeout=300,
             ),
             CrossZone=True,
-            Instances=[elasticsearchinstance],
+            Instances=[Ref(r) for r in instances],
             Listeners=[
                 elb.Listener(
                     LoadBalancerPort="9200",
@@ -120,6 +137,7 @@ class ElkStack(NetworkBase):
                     Protocol="HTTP",
                 ),
             ],
+            SecurityGroups=[Ref(self.common_sg)],
             HealthCheck=elb.HealthCheck(
                 Target=Join("", ["HTTP:", "9200", "/"]),
                 HealthyThreshold="3",

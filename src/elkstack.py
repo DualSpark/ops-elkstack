@@ -88,6 +88,7 @@ class ElkStack(NetworkBase):
         # this resource needs to be dropped into a VPC.  For now, we can use a public subnet.
         kibana = ec2.Instance("kibana", InstanceType="t2.small", ImageId="ami-e7527ed7",
             Tags=Tags(Name="kibana",), UserData=self.build_bootstrap(['src/kibana_bootstrap.sh']),
+            KeyName=Ref(self.template.parameters['ec2Key']),
             NetworkInterfaces=[
             NetworkInterfaceProperty(
                 GroupSet=[
@@ -103,6 +104,7 @@ class ElkStack(NetworkBase):
         # this resource needs to be dropped into a VPC.  For now, we can use a public subnet.
         elasticsearchinstance = ec2.Instance("es", InstanceType="t2.small", ImageId="ami-e7527ed7",
             Tags=Tags(Name="es",), UserData=self.build_bootstrap(['src/elasticsearch_bootstrap.sh']),
+            KeyName=Ref(self.template.parameters['ec2Key']),
             NetworkInterfaces=[
             NetworkInterfaceProperty(
                 GroupSet=[
@@ -117,7 +119,7 @@ class ElkStack(NetworkBase):
         instances = []
         instances.append(elasticsearchinstance)
         # ELB for the instance
-        # NEEDS A SECURITY GROUP
+        # NEEDS A SECURITY GROUP so it can talk to its instances on port 9200
         elasticsearch_elb = self.template.add_resource(elb.LoadBalancer(
             'ESELB',
             AccessLoggingPolicy=elb.AccessLoggingPolicy(

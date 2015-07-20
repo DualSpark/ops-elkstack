@@ -49,10 +49,6 @@ class ElkStack(NetworkBase):
         self.construct_network()
 
         self.elk_config = self.config.get('elk')
-        # print json.dumps(self.elk_config, indent=4)
-
-        # Matthew's debug fun
-        # print self.local_subnets['public']['0'].JSONrepr() # First public subnet
 
         # SQS queue
         queue = self.create_logstash_queue()
@@ -80,11 +76,6 @@ class ElkStack(NetworkBase):
                         ToPort='9200',
                         IpProtocol='tcp',
                         SourceSecurityGroupId=Ref(self.elastic_sg))], # AWS bug: should be DestinationSecurityGroupId
-            # SecurityGroupIngress= [ec2.SecurityGroupRule(
-            #             FromPort='9200',
-            #             ToPort='9200',
-            #             IpProtocol='tcp',
-            #             SourceSecurityGroupId=Ref(self.elastic_sg))]
             ))
         return self.logstash_sg
 

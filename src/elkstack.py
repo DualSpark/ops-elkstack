@@ -142,13 +142,13 @@ class ElkStack(NetworkBase):
             GroupDescription='For kibana ingress',
             VpcId=Ref(self.vpc),
             SecurityGroupEgress=[ec2.SecurityGroupRule(
-                        FromPort='5601',
-                        ToPort='5601',
+                        FromPort='80',
+                        ToPort='80',
                         IpProtocol='tcp',
                         CidrIp='0.0.0.0/0')], # AWS bug: should be DestinationSecurityGroupId
             SecurityGroupIngress= [ec2.SecurityGroupRule(
-                        FromPort='5601',
-                        ToPort='5601',
+                        FromPort='80',
+                        ToPort='80',
                         IpProtocol='tcp',
                         CidrIp='0.0.0.0/0')]
             ))

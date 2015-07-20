@@ -102,9 +102,9 @@ http {
     gzip_disable "msie6";
     include       mime.types;
     default_type  application/xml;
-    log_format compression '$remote_addr - $remote_user [$time_local] '
-                           '"$request" $status $body_bytes_sent '
-                           '"$http_referer" "$http_user_agent" "$gzip_ratio"';
+    log_format compression '\$remote_addr - \$remote_user [$time_local] '
+                           '"\$request" \$status \$body_bytes_sent '
+                           '"\$http_referer" "\$http_user_agent" "\$gzip_ratio"';
     error_log /var/log/nginx/notice.log notice;
 
     server {
@@ -114,10 +114,10 @@ http {
         location / {
             proxy_pass http://localhost:5601;
             proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Upgrade \$http_upgrade;
             proxy_set_header Connection 'upgrade';
-            proxy_set_header Host $host;
-            proxy_cache_bypass $http_upgrade;
+            proxy_set_header Host \$host;
+            proxy_cache_bypass \$http_upgrade;
         }
     }
 }

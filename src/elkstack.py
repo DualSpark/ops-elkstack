@@ -1,6 +1,9 @@
 from environmentbase.networkbase import NetworkBase
 from troposphere import ec2, Tags, Base64, Ref
 from troposphere.ec2 import NetworkInterfaceProperty
+from troposphere.iam import Role, InstanceProfile
+from troposphere.iam import PolicyType as IAMPolicy
+from troposphere.sqs import Queue
 import json
 
 
@@ -16,15 +19,42 @@ class ElkStack(NetworkBase):
         # Matthew's debug fun
         # print self.local_subnets['public']['0'].JSONrepr() # First public subnet
 
+        # IAM profile for logstash to chat with SQS
+        self.create_instance_profiles_for_reading_SQS()
+
+        # EC2 instances
         self.create_logstash()
         # self.create_kibana()
         # self.create_elasticsearch()
 
-        # Needs an SQS queue, too!
+        # SQS queue
+        self.create_logstash_queue()
 
         # And some way of logstash to talk to elasticsearch: R53?
 
         self.write_template_to_file()
+
+
+    def create_logstash_queue(self):
+        queue = Queue("logstashincoming", QueueName="logstashincoming")
+        self.template.add_resource(queue)
+
+    def create_instance_profiles_for_reading_SQS(self):
+        print 'pretend I did something with IAM'
+            # role = Role(
+            #     "WebServerRole",
+            #     AssumeRolePolicyDocument=Policy(
+            #         Statement=[
+            #             Statement(
+            #                 Effect=Allow, Action=[AssumeRole],
+            #                 Principal=Principal(
+            #                     "Service", [FindInMap("Region2Principal", Ref("AWS::Region"), "EC2Principal")]
+            #                 )
+            #             )
+            #         ]
+            #     ),
+            #     Path="/"
+            # ))
 
     def create_logstash(self):
         logstash_startup = '''#!/bin/bash
@@ -42,7 +72,7 @@ yum -y install logstash
 cat > /tmp/logstash.conf << EOF
 input {
     sqs {
-        queue => "logstash"
+        queue => "logstashincoming"
         region => "us-west-2"
         threads => 80
     }

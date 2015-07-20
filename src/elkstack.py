@@ -1,97 +1,253 @@
+"""
+elkstack
+
+Tool bundle manages generation, deployment, and feedback of cloudformation resources.
+
+Usage:
+    elkstack (create|deploy) [--config-file <FILE_LOCATION>] [--debug] [--template-file=<TEMPLATE_FILE>]
+
+Options:
+  -h --help                            Show this screen.
+  -v --version                         Show version.
+  --debug                              Prints parent template to console out.
+  --config-file <CONFIG_FILE>          Name of json configuration file. Default value is config.json
+  --stack-name <STACK_NAME>            User-definable value for the CloudFormation stack being deployed.
+  --template-file=<TEMPLATE_FILE>      Name of template to be either generated or deployed.
+"""
+
 from environmentbase.networkbase import NetworkBase
-from troposphere import ec2, Tags, Base64
+from environmentbase.cli import CLI
+from environmentbase.environmentbase import TEMPLATE_REQUIREMENTS
+from troposphere import ec2, Tags, Base64, Ref, iam, GetAtt, GetAZs, Join, FindInMap
+from troposphere.ec2 import NetworkInterfaceProperty
+from troposphere.iam import Role, InstanceProfile
+from troposphere.iam import PolicyType as IAMPolicy, Policy
+from troposphere.sqs import Queue
+import troposphere.elasticloadbalancing as elb
 import json
+import string
+import os
+import docopt
 
 
 class ElkStack(NetworkBase):
-    '''
+    """
     ELK stack template generation
-    '''
+    """
+
+    def __init__(self, *args, **kwargs):
+        TEMPLATE_REQUIREMENTS['elk'] = [
+            ('elasticsearch_ami_id', basestring),
+            ('logstash_ami_id', basestring),
+            ('kibana_ami_id', basestring)
+        ]
+
+        super(ElkStack, self).__init__(*args, **kwargs)
 
     def create_action(self):
         self.initialize_template()
         self.construct_network()
 
-        print self.vpc.JSONrepr()
+        self.elk_config = self.config.get('elk')
+        # print json.dumps(self.elk_config, indent=4)
 
-        # self.create_logstash()
-        # self.create_kibana()
-        # self.create_elasticsearch()
+        # Matthew's debug fun
+        # print self.local_subnets['public']['0'].JSONrepr() # First public subnet
 
-        # This triggers serialization of the template and any child stacks
+        # SQS queue
+        queue = self.create_logstash_queue()
+
+        # IAM profile for logstash to chat with SQS
+        policies = self.create_instance_profiles_for_reading_SQS()
+
+        # EC2 instances
+        # order is important: need to create the ELB for ElasticSearch before
+        # calling create_logstash: it uses it for log shipping destination.
+        self.elasticsearch_elb = self.create_elasticsearch()
+        self.logstash_sg = self.create_logstash_outbound_sg()
+        self.create_logstash()
+        self.create_kibana()
+
         self.write_template_to_file()
 
+    def create_logstash_outbound_sg(self):
+        self.logstash_sg = self.template.add_resource(ec2.SecurityGroup(
+            'logstashSecurityGroup',
+            GroupDescription='For logstash egress to elasticsearch',
+            VpcId=Ref(self.vpc),
+            SecurityGroupEgress=[ec2.SecurityGroupRule(
+                        FromPort='9200',
+                        ToPort='9200',
+                        IpProtocol='tcp',
+                        SourceSecurityGroupId=Ref(self.elastic_sg))], # AWS bug: should be DestinationSecurityGroupId
+            # SecurityGroupIngress= [ec2.SecurityGroupRule(
+            #             FromPort='9200',
+            #             ToPort='9200',
+            #             IpProtocol='tcp',
+            #             SourceSecurityGroupId=Ref(self.elastic_sg))]
+            ))
+        return self.logstash_sg
+
+    def create_logstash_queue(self):
+        self.queue = Queue("logstashincoming", QueueName="logstashincoming")
+        self.template.add_resource(self.queue)
+
+    def create_instance_profiles_for_reading_SQS(self):
+        # configured per https://www.elastic.co/guide/en/logstash/current/plugins-inputs-sqs.html
+        self.policies = [iam.Policy(
+            PolicyName='logstashqueueaccess',
+            PolicyDocument={
+                "Statement": [{
+                    "Effect": "Allow",
+                        "Action": [
+                            "sqs:ChangeMessageVisibility",
+                            "sqs:ChangeMessageVisibilityBatch",
+                            "sqs:GetQueueAttributes",
+                            "sqs:GetQueueUrl",
+                            "sqs:ListQueues",
+                            "sqs:SendMessage",
+                            "sqs:SendMessageBatch",
+                            "sqs:ReceiveMessage"
+                        ],
+                        "Resource": GetAtt("logstashincoming", "Arn")}]
+            })]
+
+        self.create_instance_profile(layer_name = "logstashsqsrole", iam_policies = self.policies)
+
     def create_logstash(self):
-        logstash_startup = '''#!/bin/bash
+        startup_vars = []
+        startup_vars.append(Join('=', ['ELASTICSEARCH_ELB_DNS_NAME', GetAtt(self.elasticsearch_elb, 'DNSName')]))
 
-cat <<EOF >> /etc/yum.repos.d/elasticsearch.repo
-[logstash-1.5]
-name=Logstash repository for 1.5.x packages
-baseurl=http://packages.elasticsearch.org/logstash/1.5/centos
-gpgcheck=1
-gpgkey=http://packages.elasticsearch.org/GPG-KEY-elasticsearch
-enabled=1
-EOF
+        logstash = ec2.Instance("logstash", InstanceType="t2.micro",
+            ImageId=FindInMap('RegionMap', Ref('AWS::Region'), self.elk_config.get('logstash_ami_id')),
+            Tags=Tags(Name="logstash",), UserData=self.build_bootstrap(['src/logstash_bootstrap.sh'], variable_declarations= startup_vars),
+            KeyName=Ref(self.template.parameters['ec2Key']),
+            IamInstanceProfile=Ref('logstashsqsroleInstancePolicy'),
+            NetworkInterfaces=[
+                NetworkInterfaceProperty(
+                    GroupSet=[
+                        Ref(self.common_sg),
+                        Ref(self.logstash_sg)],
+                    AssociatePublicIpAddress='true',
+                    DeviceIndex='0',
+                    DeleteOnTermination='true',
+                    SubnetId=Ref(self.local_subnets['public']['0']))]
+            )
 
-yum -y install logstash
-
-service logstash restart
-
-# it's listening to the world, lock down later and via SG and VPCs, etc...
-# edit /etc/elasticsearch/elasticsearch.yml to change where it listens to.
-        '''
-
-        # this resource needs to be dropped into a VPC.  For now, we can use a public subnet.
-        res = ec2.Instance("logstash", InstanceType="m3.medium", ImageId="ami-951945d0",
-            Tags=Tags(Name="logstash",), UserData=Base64(logstash_startup))
-        self.template.add_resource(res)
+        self.template.add_resource(logstash)
 
     def create_kibana(self):
-        kibana_startup = '''#!/bin/bash
+        # This is open to the world, should switch to nginx for basic auth
+        self.kibana_ingress_sg = self.template.add_resource(ec2.SecurityGroup('kibanaIngressSecurityGroup',
+            GroupDescription='For kibana ingress',
+            VpcId=Ref(self.vpc),
+            SecurityGroupEgress=[ec2.SecurityGroupRule(
+                        FromPort='5601',
+                        ToPort='5601',
+                        IpProtocol='tcp',
+                        CidrIp='0.0.0.0/0')], # AWS bug: should be DestinationSecurityGroupId
+            SecurityGroupIngress= [ec2.SecurityGroupRule(
+                        FromPort='5601',
+                        ToPort='5601',
+                        IpProtocol='tcp',
+                        CidrIp='0.0.0.0/0')]
+            ))
 
-        mkdir -p /opt/kibana
-        cd /opt/kibana
-        wget https://download.elastic.co/kibana/kibana/kibana-4.1.1-linux-x64.tar.gz
-        tar xvf kibana-*.tar.gz
-        mv kibana-4.1.1-linux-x64/* ./
+        # Not DRY:
+        startup_vars = []
+        startup_vars.append(Join('=', ['ELASTICSEARCH_ELB_DNS_NAME', GetAtt(self.elasticsearch_elb, 'DNSName')]))
 
-        cd /etc/init.d && wget https://gist.githubusercontent.com/orih/182da221010f56e4644e/raw/b42ab63fd40c8b4f18289aa91bb92d55bb1e0c5d/kibana.sh
-        mv /etc/init.d/kibana.sh /etc/init.d/kibana
-        chmod +x /etc/init.d/kibana
-        service kibana start
-        '''
-        # this resource needs to be dropped into a VPC.  For now, we can use a public subnet.
-        res = ec2.Instance("kibana", InstanceType="m3.medium", ImageId="ami-951945d0",
-            Tags=Tags(Name="kibana",), UserData=Base64(kibana_startup))
-        self.template.add_resource(res)
+        kibana = ec2.Instance("kibana", InstanceType="t2.micro",
+            ImageId=FindInMap('RegionMap', Ref('AWS::Region'), self.elk_config.get('kibana_ami_id')),
+            Tags=Tags(Name="kibana",), UserData=self.build_bootstrap(['src/kibana_bootstrap.sh'], variable_declarations= startup_vars),
+            KeyName=Ref(self.template.parameters['ec2Key']),
+            NetworkInterfaces=[
+            NetworkInterfaceProperty(
+                GroupSet=[
+                    Ref(self.common_sg),            # common
+                    Ref(self.kibana_ingress_sg),    # users can talk to kibana
+                    Ref(self.elastic_sg)],          # kibana can talk to the ES ELB
+                AssociatePublicIpAddress='true',
+                DeviceIndex='0',
+                DeleteOnTermination='true',
+                SubnetId=Ref(self.local_subnets['public']['0']))])
+
+        self.template.add_resource(kibana)
 
     def create_elasticsearch(self):
-        elasticsearch_startup = '''#!/bin/bash
+        self.elastic_sg = self.template.add_resource(ec2.SecurityGroup('elasticsearchSecurityGroup',
+            GroupDescription='For elasticsearch ingress from logstash',
+            VpcId=Ref(self.vpc),
+            SecurityGroupEgress=[ec2.SecurityGroupRule(
+                        FromPort='9200',
+                        ToPort='9200',
+                        IpProtocol='tcp',
+                        SourceSecurityGroupId=Ref(self.common_sg))], # AWS bug: should be DestinationSecurityGroupId
+            SecurityGroupIngress= [ec2.SecurityGroupRule(
+                        FromPort='9200',
+                        ToPort='9200',
+                        IpProtocol='tcp',
+                        SourceSecurityGroupId=Ref(self.common_sg))]
+            ))
 
-rpm --import https://packages.elasticsearch.org/GPG-KEY-elasticsearch
+        elasticsearchinstance = ec2.Instance(
+            "es",
+            InstanceType="t2.micro",
+            ImageId=FindInMap('RegionMap', Ref('AWS::Region'), self.elk_config.get('elasticsearch_ami_id')),
+            Tags=Tags(Name="es",),
+            UserData=self.build_bootstrap(['src/elasticsearch_bootstrap.sh']),
+            KeyName=Ref(self.template.parameters['ec2Key']),
+            NetworkInterfaces=[
+                NetworkInterfaceProperty(
+                    GroupSet=[
+                        Ref(self.common_sg),
+                        Ref(self.elastic_sg)],
+                    AssociatePublicIpAddress='true',
+                    DeviceIndex='0',
+                    DeleteOnTermination='true',
+                    SubnetId=Ref(self.local_subnets['public']['0']))])
 
-cat <<EOF >> /etc/yum.repos.d/elasticsearch.repo
-[elasticsearch-1.7]
-name=Elasticsearch repository for 1.7.x packages
-baseurl=http://packages.elasticsearch.org/elasticsearch/1.7/centos
-gpgcheck=1
-gpgkey=http://packages.elasticsearch.org/GPG-KEY-elasticsearch
-enabled=1
-EOF
+        self.template.add_resource(elasticsearchinstance)
 
-yum -y install elasticsearch
+        instances = []
+        instances.append(elasticsearchinstance)
 
-service elasticsearch restart
-'''
-        # this resource needs to be dropped into a VPC.  For now, we can use a public subnet.
-        res = ec2.Instance("es", InstanceType="m3.medium", ImageId="ami-951945d0",
-            Tags=Tags(Name="es",), UserData=Base64(elasticsearch_startup))
-        self.template.add_resource(res)
+        # ELB for the instance
+        elasticsearch_elb = self.template.add_resource(elb.LoadBalancer(
+            'ESELB',
+            AccessLoggingPolicy=elb.AccessLoggingPolicy(
+                Enabled=False,
+            ),
+            Subnets=self.subnets['public'], # should be from networkbase
+            ConnectionDrainingPolicy=elb.ConnectionDrainingPolicy(
+                Enabled=True,
+                Timeout=300,
+            ),
+            Scheme="internal",
+            CrossZone=True,
+            Instances=[Ref(r) for r in instances],
+            Listeners=[
+                elb.Listener(
+                    LoadBalancerPort="9200",
+                    InstancePort="9200",
+                    Protocol="HTTP",
+                ),
+            ],
+            SecurityGroups=[Ref(self.common_sg), Ref(self.elastic_sg)],
+            HealthCheck=elb.HealthCheck(
+                Target=Join("", ["HTTP:", "9200", "/"]),
+                HealthyThreshold="3",
+                UnhealthyThreshold="10",
+                Interval="30",
+                Timeout="5",
+            )
+        ))
+        return elasticsearch_elb
 
 
 def main():
-    ElkStack()
+    cli = CLI(doc=__doc__)
+    ElkStack(view=cli)
 
 if __name__ == '__main__':
     main()
-

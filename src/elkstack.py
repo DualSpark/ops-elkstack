@@ -126,8 +126,8 @@ class ElkStack(NetworkBase):
             NetworkInterfaces=[
                 NetworkInterfaceProperty(
                     GroupSet=[
-                        Ref(self.common_sg)],
-                        # Ref(self.logstash_sg)],
+                        Ref(self.common_sg),
+                        Ref(self.logstash_sg)],
                     AssociatePublicIpAddress='true',
                     DeviceIndex='0',
                     DeleteOnTermination='true',

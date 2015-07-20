@@ -156,6 +156,8 @@ class ElkStack(NetworkBase):
         # Not DRY:
         startup_vars = []
         startup_vars.append(Join('=', ['ELASTICSEARCH_ELB_DNS_NAME', GetAtt(self.elasticsearch_elb, 'DNSName')]))
+        startup_vars.append(Join('=', ['KIBANA_PASSWORD', 'kpassword'])) # move to input from user
+
 
         kibana = ec2.Instance("kibana", InstanceType="t2.micro",
             ImageId=FindInMap('RegionMap', Ref('AWS::Region'), self.elk_config.get('kibana_ami_id')),

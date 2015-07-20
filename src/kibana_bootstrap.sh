@@ -1,5 +1,6 @@
 #!/bin/bash
 #~ELASTICSEARCH_ELB_DNS_NAME=
+#~KIBANA_PASSWORD=
 mkdir -p /opt/kibana
 cd /opt/kibana
 wget https://download.elastic.co/kibana/kibana/kibana-4.1.1-linux-x64.tar.gz
@@ -83,7 +84,46 @@ EOF
 mv /tmp/kibana.sh /etc/init.d/kibana
 chmod +x /etc/init.d/kibana
 
-# change kibana to only listen to localhost: nginx will proxy it
 sed -i "s|localhost:9200|$ELASTICSEARCH_ELB_DNS_NAME:9200|" /opt/kibana/config/kibana.yml
+sed -i "s|0.0.0.0|localhost|" /opt/kibana/config/kibana.yml
+
+yum -y install nginx httpd-tools
+htpasswd -bc /opt/kibana/.htpasswd kibanauser $KIBANA_PASSWORD
+
+cat > /tmp/nginx.conf << EOF
+user nobody;
+worker_processes 2;
+pid /var/run/nginx.pid;
+events {
+    worker_connections  1024;
+}
+http {
+    gzip on;
+    gzip_disable "msie6";
+    include       mime.types;
+    default_type  application/xml;
+    log_format compression '$remote_addr - $remote_user [$time_local] '
+                           '"$request" $status $body_bytes_sent '
+                           '"$http_referer" "$http_user_agent" "$gzip_ratio"';
+    error_log /var/log/nginx/notice.log notice;
+
+    server {
+        listen       80;
+        auth_basic "Restricted Access";
+        auth_basic_user_file /opt/kibana/.htpasswd;
+        location / {
+            proxy_pass http://localhost:5601;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_cache_bypass $http_upgrade;
+        }
+    }
+}
+EOF
+
+mv -f /tmp/nginx.conf /etc/nginx/nginx.conf
+service nginx restart
 
 service kibana start

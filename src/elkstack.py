@@ -172,7 +172,7 @@ class ElkStack(NetworkBase):
 
 def main():
     cli = CLI(doc=__doc__)
-    ElkStack(cli)
+    ElkStack(view=cli)
 
 if __name__ == '__main__':
     main()

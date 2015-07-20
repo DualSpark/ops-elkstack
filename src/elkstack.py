@@ -1,8 +1,8 @@
 from environmentbase.networkbase import NetworkBase
-from troposphere import ec2, Tags, Base64, Ref
+from troposphere import ec2, Tags, Base64, Ref, iam, GetAtt
 from troposphere.ec2 import NetworkInterfaceProperty
 from troposphere.iam import Role, InstanceProfile
-from troposphere.iam import PolicyType as IAMPolicy
+from troposphere.iam import PolicyType as IAMPolicy, Policy
 from troposphere.sqs import Queue
 import json
 
@@ -19,16 +19,16 @@ class ElkStack(NetworkBase):
         # Matthew's debug fun
         # print self.local_subnets['public']['0'].JSONrepr() # First public subnet
 
+        # SQS queue
+        queue = self.create_logstash_queue()
+
         # IAM profile for logstash to chat with SQS
-        self.create_instance_profiles_for_reading_SQS()
+        policies = self.create_instance_profiles_for_reading_SQS()
 
         # EC2 instances
         self.create_logstash()
         # self.create_kibana()
         # self.create_elasticsearch()
-
-        # SQS queue
-        self.create_logstash_queue()
 
         # And some way of logstash to talk to elasticsearch: R53?
 
@@ -36,25 +36,20 @@ class ElkStack(NetworkBase):
 
 
     def create_logstash_queue(self):
-        queue = Queue("logstashincoming", QueueName="logstashincoming")
-        self.template.add_resource(queue)
+        self.queue = Queue("logstashincoming", QueueName="logstashincoming")
+        self.template.add_resource(self.queue)
 
     def create_instance_profiles_for_reading_SQS(self):
-        print 'pretend I did something with IAM'
-            # role = Role(
-            #     "WebServerRole",
-            #     AssumeRolePolicyDocument=Policy(
-            #         Statement=[
-            #             Statement(
-            #                 Effect=Allow, Action=[AssumeRole],
-            #                 Principal=Principal(
-            #                     "Service", [FindInMap("Region2Principal", Ref("AWS::Region"), "EC2Principal")]
-            #                 )
-            #             )
-            #         ]
-            #     ),
-            #     Path="/"
-            # ))
+        self.policies = [iam.Policy(
+            PolicyName='logstashqueueaccess',
+            PolicyDocument={
+                "Statement": [{
+                    "Effect": "Allow",
+                        "Action": ["sqs:ReceiveMessage"],
+                        "Resource": GetAtt("logstashincoming", "Arn")}]
+            })]
+
+        self.create_instance_profile(layer_name = "logstashsqsrole", iam_policies = self.policies)
 
     def create_logstash(self):
         logstash_startup = '''#!/bin/bash
@@ -105,6 +100,7 @@ service logstash restart
         res = ec2.Instance("logstash", InstanceType="t2.small", ImageId="ami-e7527ed7",
             Tags=Tags(Name="logstash",), UserData=Base64(logstash_startup),
             KeyName=Ref(self.template.parameters['ec2Key']),
+            IamInstanceProfile=Ref('logstashsqsroleInstancePolicy'),
             # SubnetId=Ref(self.local_subnets['public']['0']),
             NetworkInterfaces=[
             NetworkInterfaceProperty(

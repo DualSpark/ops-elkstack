@@ -40,12 +40,22 @@ class ElkStack(NetworkBase):
         self.template.add_resource(self.queue)
 
     def create_instance_profiles_for_reading_SQS(self):
+        # configured per https://www.elastic.co/guide/en/logstash/current/plugins-inputs-sqs.html
         self.policies = [iam.Policy(
             PolicyName='logstashqueueaccess',
             PolicyDocument={
                 "Statement": [{
                     "Effect": "Allow",
-                        "Action": ["sqs:ReceiveMessage"],
+                        "Action": [
+                            "sqs:ChangeMessageVisibility",
+                            "sqs:ChangeMessageVisibilityBatch",
+                            "sqs:GetQueueAttributes",
+                            "sqs:GetQueueUrl",
+                            "sqs:ListQueues",
+                            "sqs:SendMessage",
+                            "sqs:SendMessageBatch",
+                            "sqs:ReceiveMessage"
+                        ],
                         "Resource": GetAtt("logstashincoming", "Arn")}]
             })]
 

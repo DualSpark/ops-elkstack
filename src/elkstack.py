@@ -17,7 +17,8 @@ Options:
 
 from environmentbase.networkbase import NetworkBase
 from environmentbase.cli import CLI
-from troposphere import ec2, Tags, Base64, Ref, iam, GetAtt, GetAZs, Join
+from environmentbase.environmentbase import TEMPLATE_REQUIREMENTS
+from troposphere import ec2, Tags, Base64, Ref, iam, GetAtt, GetAZs, Join, FindInMap
 from troposphere.ec2 import NetworkInterfaceProperty
 from troposphere.iam import Role, InstanceProfile
 from troposphere.iam import PolicyType as IAMPolicy, Policy
@@ -30,13 +31,25 @@ import docopt
 
 
 class ElkStack(NetworkBase):
-    '''
+    """
     ELK stack template generation
-    '''
+    """
+
+    def __init__(self, *args, **kwargs):
+        TEMPLATE_REQUIREMENTS['elk'] = [
+            ('elasticsearch_ami_id', basestring),
+            ('logstash_ami_id', basestring),
+            ('kibana_ami_id', basestring)
+        ]
+
+        super(ElkStack, self).__init__(*args, **kwargs)
 
     def create_action(self):
         self.initialize_template()
         self.construct_network()
+
+        self.elk_config = self.config.get('elk')
+        print json.dumps(self.elk_config, indent=4)
 
         # Matthew's debug fun
         # print self.local_subnets['public']['0'].JSONrepr() # First public subnet
@@ -52,13 +65,15 @@ class ElkStack(NetworkBase):
         # calling create_logstash: it uses it for log shipping destination.
         self.elasticsearch_elb = self.create_elasticsearch()
         self.logstash_sg = self.create_logstash_outbound_sg()
+        print self.logstash_sg
         self.create_logstash()
         self.create_kibana()
 
         self.write_template_to_file()
 
     def create_logstash_outbound_sg(self):
-        self.logstash_sg = self.template.add_resource(ec2.SecurityGroup('logstashSecurityGroup',
+        self.logstash_sg = self.template.add_resource(ec2.SecurityGroup(
+            'logstashSecurityGroup',
             GroupDescription='For logstash egress to elasticsearch',
             VpcId=Ref(self.vpc),
             SecurityGroupEgress=[ec2.SecurityGroupRule(
@@ -103,36 +118,46 @@ class ElkStack(NetworkBase):
         startup_vars = []
         startup_vars.append(Join('=', ['ELASTICSEARCH_ELB_DNS_NAME', GetAtt(self.elasticsearch_elb, 'DNSName')]))
         # instance size dropped to a t2.small for making debugging cheaper.
-        logstash = ec2.Instance("logstash", InstanceType="t2.micro", ImageId="ami-e7527ed7",
-            Tags=Tags(Name="logstash",), UserData=self.build_bootstrap(['src/logstash_bootstrap.sh'], variable_declarations= startup_vars),
+
+        print self.logstash_sg
+
+        logstash = ec2.Instance(
+            "logstash",
+            InstanceType="t2.micro",
+            ImageId=FindInMap('RegionMap', Ref('AWS::Region'), self.elk_config.get('logstash_ami_id')),
+            Tags=Tags(Name="logstash",),
+            UserData=self.build_bootstrap(['src/logstash_bootstrap.sh'], variable_declarations= startup_vars),
             KeyName=Ref(self.template.parameters['ec2Key']),
             IamInstanceProfile=Ref('logstashsqsroleInstancePolicy'),
             NetworkInterfaces=[
-            NetworkInterfaceProperty(
-                GroupSet=[
-                    Ref(self.common_sg),
-                    Ref(self.logstash_sg)],
-                AssociatePublicIpAddress='true',
-                DeviceIndex='0',
-                DeleteOnTermination='true',
-                SubnetId=Ref(self.local_subnets['public']['0']))]
+                NetworkInterfaceProperty(
+                    GroupSet=[
+                        Ref(self.common_sg)],
+                        # Ref(self.logstash_sg)],
+                    AssociatePublicIpAddress='true',
+                    DeviceIndex='0',
+                    DeleteOnTermination='true',
+                    SubnetId=Ref(self.local_subnets['public']['0']))]
             )
 
         self.template.add_resource(logstash)
 
     def create_kibana(self):
         # this resource needs to be dropped into a VPC.  For now, we can use a public subnet.
-        kibana = ec2.Instance("kibana", InstanceType="t2.micro", ImageId="ami-e7527ed7",
-            Tags=Tags(Name="kibana",), UserData=self.build_bootstrap(['src/kibana_bootstrap.sh']),
+        kibana = ec2.Instance(
+            "kibana",
+            InstanceType="t2.micro",
+            ImageId=FindInMap('RegionMap', Ref('AWS::Region'), self.elk_config.get('kibana_ami_id')),
+            Tags=Tags(Name="kibana",),
+            UserData=self.build_bootstrap(['src/kibana_bootstrap.sh']),
             KeyName=Ref(self.template.parameters['ec2Key']),
             NetworkInterfaces=[
-            NetworkInterfaceProperty(
-                GroupSet=[
-                    Ref(self.common_sg)],
-                AssociatePublicIpAddress='true',
-                DeviceIndex='0',
-                DeleteOnTermination='true',
-                SubnetId=Ref(self.local_subnets['public']['0']))])
+                NetworkInterfaceProperty(
+                    GroupSet=[Ref(self.common_sg)],
+                    AssociatePublicIpAddress='true',
+                    DeviceIndex='0',
+                    DeleteOnTermination='true',
+                    SubnetId=Ref(self.local_subnets['public']['0']))])
 
         self.template.add_resource(kibana)
 
@@ -153,18 +178,22 @@ class ElkStack(NetworkBase):
             ))
 
         # this resource needs to be dropped into a VPC.  For now, we can use a public subnet.
-        elasticsearchinstance = ec2.Instance("es", InstanceType="t2.micro", ImageId="ami-e7527ed7",
-            Tags=Tags(Name="es",), UserData=self.build_bootstrap(['src/elasticsearch_bootstrap.sh']),
+        elasticsearchinstance = ec2.Instance(
+            "es",
+            InstanceType="t2.micro",
+            ImageId=FindInMap('RegionMap', Ref('AWS::Region'), self.elk_config.get('elasticsearch_ami_id')),
+            Tags=Tags(Name="es",),
+            UserData=self.build_bootstrap(['src/elasticsearch_bootstrap.sh']),
             KeyName=Ref(self.template.parameters['ec2Key']),
             NetworkInterfaces=[
-            NetworkInterfaceProperty(
-                GroupSet=[
-                    Ref(self.common_sg),
-                    Ref(self.elastic_sg)],
-                AssociatePublicIpAddress='true',
-                DeviceIndex='0',
-                DeleteOnTermination='true',
-                SubnetId=Ref(self.local_subnets['public']['0']))])
+                NetworkInterfaceProperty(
+                    GroupSet=[
+                        Ref(self.common_sg),
+                        Ref(self.elastic_sg)],
+                    AssociatePublicIpAddress='true',
+                    DeviceIndex='0',
+                    DeleteOnTermination='true',
+                    SubnetId=Ref(self.local_subnets['public']['0']))])
 
         self.template.add_resource(elasticsearchinstance)
 

@@ -41,5 +41,10 @@
         "ubuntu1404LTS": "ubuntu/images/hvm-ssd/ubuntu-trusty-14.04-amd64-server-20150325",
         "amazonLinux": "amzn-ami-hvm-2015.03.0.x86_64-gp2",
         "nat": "amzn-ami-vpc-nat-pv-2014.09.1.x86_64-ebs"
+    },
+    "elk": {
+        "elasticsearch_ami_id": "amazonLinuxAmiId",
+        "logstash_ami_id": "amazonLinuxAmiId",
+        "kibana_ami_id": "amazonLinuxAmiId"
     }
 }

@@ -20,12 +20,14 @@ class ElkStack(NetworkBase):
         # self.create_kibana()
         # self.create_elasticsearch()
 
-        # This triggers serialization of the template and any child stacks
+        # Needs an SQS queue, too!
+
+        # And some way of logstash to talk to elasticsearch: R53?
+
         self.write_template_to_file()
 
     def create_logstash(self):
         logstash_startup = '''#!/bin/bash
-
 cat <<EOF >> /etc/yum.repos.d/elasticsearch.repo
 [logstash-1.5]
 name=Logstash repository for 1.5.x packages
@@ -37,10 +39,36 @@ EOF
 
 yum -y install logstash
 
-service logstash restart
+cat > /tmp/logstash.conf << EOF
+input {
+    sqs {
+        queue => "logstash"
+        region => "us-west-2"
+        threads => 80
+    }
+    file {
+        path => "/var/log/*log"
+        type => "syslog"
+    }
+    file {
+        path => "/var/log/messages"
+        type => "syslog"
+    }
+}
 
-# it's listening to the world, lock down later and via SG and VPCs, etc...
-# edit /etc/elasticsearch/elasticsearch.yml to change where it listens to.
+output {
+    elasticsearch {
+        protocol => "http"
+        host => "localhost"
+        port => "9200"
+        flush_size => 500
+    }
+}
+EOF
+
+mv /tmp/logstash.conf /etc/logstash/conf.d/logstash.conf
+
+service logstash restart
         '''
 
         # instance size dropped to a t2.small for making debugging cheaper.
@@ -75,7 +103,7 @@ service logstash restart
         service kibana start
         '''
         # this resource needs to be dropped into a VPC.  For now, we can use a public subnet.
-        res = ec2.Instance("kibana", InstanceType="m3.medium", ImageId="ami-951945d0",
+        res = ec2.Instance("kibana", InstanceType="t2.small", ImageId="ami-e7527ed7",
             Tags=Tags(Name="kibana",), UserData=Base64(kibana_startup))
         self.template.add_resource(res)
 
@@ -98,7 +126,7 @@ yum -y install elasticsearch
 service elasticsearch restart
 '''
         # this resource needs to be dropped into a VPC.  For now, we can use a public subnet.
-        res = ec2.Instance("es", InstanceType="m3.medium", ImageId="ami-951945d0",
+        res = ec2.Instance("es", InstanceType="t2.small", ImageId="ami-e7527ed7",
             Tags=Tags(Name="es",), UserData=Base64(elasticsearch_startup))
         self.template.add_resource(res)
 

@@ -32,11 +32,27 @@ class ElkStack(NetworkBase):
         # order is important: need to create the ELB for ElasticSearch before
         # calling create_logstash: it uses it for log shipping destination.
         self.elasticsearch_elb = self.create_elasticsearch()
+        self.logstash_sg = self.create_logstash_outbound_sg()
         self.create_logstash()
         self.create_kibana()
 
         self.write_template_to_file()
 
+    def create_logstash_outbound_sg(self):
+        self.logstash_sg = self.template.add_resource(ec2.SecurityGroup('logstashSecurityGroup',
+            GroupDescription='For logstash egress to elasticsearch',
+            VpcId=Ref(self.vpc),
+            SecurityGroupEgress=[ec2.SecurityGroupRule(
+                        FromPort='9200',
+                        ToPort='9200',
+                        IpProtocol='tcp',
+                        SourceSecurityGroupId=Ref(self.elastic_sg))], # AWS bug: should be DestinationSecurityGroupId
+            # SecurityGroupIngress= [ec2.SecurityGroupRule(
+            #             FromPort='9200',
+            #             ToPort='9200',
+            #             IpProtocol='tcp',
+            #             SourceSecurityGroupId=Ref(self.elastic_sg))]
+            ))
 
     def create_logstash_queue(self):
         self.queue = Queue("logstashincoming", QueueName="logstashincoming")
@@ -68,14 +84,15 @@ class ElkStack(NetworkBase):
         startup_vars = []
         startup_vars.append(Join('=', ['ELASTICSEARCH_ELB_DNS_NAME', GetAtt(self.elasticsearch_elb, 'DNSName')]))
         # instance size dropped to a t2.small for making debugging cheaper.
-        logstash = ec2.Instance("logstash", InstanceType="t2.small", ImageId="ami-e7527ed7",
+        logstash = ec2.Instance("logstash", InstanceType="t2.micro", ImageId="ami-e7527ed7",
             Tags=Tags(Name="logstash",), UserData=self.build_bootstrap(['src/logstash_bootstrap.sh'], variable_declarations= startup_vars),
             KeyName=Ref(self.template.parameters['ec2Key']),
             IamInstanceProfile=Ref('logstashsqsroleInstancePolicy'),
             NetworkInterfaces=[
             NetworkInterfaceProperty(
                 GroupSet=[
-                    Ref(self.common_sg)],
+                    Ref(self.common_sg),
+                    Ref(self.logstash_sg)],
                 AssociatePublicIpAddress='true',
                 DeviceIndex='0',
                 DeleteOnTermination='true',
@@ -86,7 +103,7 @@ class ElkStack(NetworkBase):
 
     def create_kibana(self):
         # this resource needs to be dropped into a VPC.  For now, we can use a public subnet.
-        kibana = ec2.Instance("kibana", InstanceType="t2.small", ImageId="ami-e7527ed7",
+        kibana = ec2.Instance("kibana", InstanceType="t2.micro", ImageId="ami-e7527ed7",
             Tags=Tags(Name="kibana",), UserData=self.build_bootstrap(['src/kibana_bootstrap.sh']),
             KeyName=Ref(self.template.parameters['ec2Key']),
             NetworkInterfaces=[
@@ -101,14 +118,30 @@ class ElkStack(NetworkBase):
         self.template.add_resource(kibana)
 
     def create_elasticsearch(self):
+        self.elastic_sg = self.template.add_resource(ec2.SecurityGroup('elasticsearchSecurityGroup',
+            GroupDescription='For elasticsearch ingress from logstash',
+            VpcId=Ref(self.vpc),
+            SecurityGroupEgress=[ec2.SecurityGroupRule(
+                        FromPort='9200',
+                        ToPort='9200',
+                        IpProtocol='tcp',
+                        SourceSecurityGroupId=Ref(self.common_sg))], # AWS bug: should be DestinationSecurityGroupId
+            SecurityGroupIngress= [ec2.SecurityGroupRule(
+                        FromPort='9200',
+                        ToPort='9200',
+                        IpProtocol='tcp',
+                        SourceSecurityGroupId=Ref(self.common_sg))]
+            ))
+
         # this resource needs to be dropped into a VPC.  For now, we can use a public subnet.
-        elasticsearchinstance = ec2.Instance("es", InstanceType="t2.small", ImageId="ami-e7527ed7",
+        elasticsearchinstance = ec2.Instance("es", InstanceType="t2.micro", ImageId="ami-e7527ed7",
             Tags=Tags(Name="es",), UserData=self.build_bootstrap(['src/elasticsearch_bootstrap.sh']),
             KeyName=Ref(self.template.parameters['ec2Key']),
             NetworkInterfaces=[
             NetworkInterfaceProperty(
                 GroupSet=[
-                    Ref(self.common_sg)],
+                    Ref(self.common_sg),
+                    Ref(self.elastic_sg)],
                 AssociatePublicIpAddress='true',
                 DeviceIndex='0',
                 DeleteOnTermination='true',
@@ -130,6 +163,7 @@ class ElkStack(NetworkBase):
                 Enabled=True,
                 Timeout=300,
             ),
+            Scheme="internal",
             CrossZone=True,
             Instances=[Ref(r) for r in instances],
             Listeners=[
@@ -139,7 +173,7 @@ class ElkStack(NetworkBase):
                     Protocol="HTTP",
                 ),
             ],
-            SecurityGroups=[Ref(self.common_sg)],
+            SecurityGroups=[Ref(self.common_sg), Ref(self.elastic_sg)],
             HealthCheck=elb.HealthCheck(
                 Target=Join("", ["HTTP:", "9200", "/"]),
                 HealthyThreshold="3",

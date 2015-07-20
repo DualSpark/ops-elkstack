@@ -103,6 +103,7 @@ class ElkStack(NetworkBase):
         self.template.add_resource(logstash)
 
     def create_kibana(self):
+        # This is open to the world, should switch to nginx for basic auth
         self.kibana_ingress_sg = self.template.add_resource(ec2.SecurityGroup('kibanaIngressSecurityGroup',
             GroupDescription='For kibana ingress',
             VpcId=Ref(self.vpc),

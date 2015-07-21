@@ -1,5 +1,5 @@
 #!/bin/bash
-
+#~REGION=
 rpm --import https://packages.elasticsearch.org/GPG-KEY-elasticsearch
 
 cat <<EOF >> /etc/yum.repos.d/elasticsearch.repo
@@ -12,5 +12,11 @@ enabled=1
 EOF
 
 yum -y install elasticsearch
+service elasticsearch restart
+/usr/share/elasticsearch/bin/plugin install elasticsearch/elasticsearch-cloud-aws/2.7.0
+
+echo "cloud.aws.region: $REGION" >> /etc/elasticsearch/elasticsearch.yml
+echo "discovery.type: ec2" >> /etc/elasticsearch/elasticsearch.yml
+echo "discovery.ec2.tag.stage: dev" >> /etc/elasticsearch/elasticsearch.yml
 
 service elasticsearch restart

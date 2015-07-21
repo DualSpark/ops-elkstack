@@ -62,6 +62,24 @@ class ElkTemplate(Template):
             })]
         self.add_instance_profile(layer_name="logstashsqsrole", iam_policies=self.policies, path_prefix=env_name)
 
+    def create_instance_profiles_for_talking_to_ec2(self, env_name):
+        # configured per https://github.com/elastic/elasticsearch-cloud-aws
+        self.queryec2 = [iam.Policy(
+            PolicyName='queryinstancesrole',
+            PolicyDocument={
+                "Statement": [{
+                    "Effect": "Allow",
+                        "Action": [
+                            "ec2:DescribeAvailabilityZones",
+                            "ec2:DescribeInstances",
+                            "ec2:DescribeRegions",
+                            "ec2:DescribeSecurityGroups",
+                            "ec2:DescribeTags"
+                        ],
+                        "Resource": ["*"] }]
+            })]
+        self.add_instance_profile(layer_name="queryinstancesrole", iam_policies=self.queryec2, path_prefix=env_name)
+
     def create_elasticsearch(self, ami_id):
         # Elasticsearch SG for ingress from logstash
         self.elastic_sg = self.add_resource(ec2.SecurityGroup('elasticsearchSecurityGroup',
@@ -125,6 +143,9 @@ class ElkTemplate(Template):
             )
         ))
 
+        startup_vars = []
+        startup_vars.append(Join('=', ['REGION', Ref('AWS::Region')]))
+
         # ASG launch config for instances
         self.launch_config = autoscaling.LaunchConfiguration('ElastichSearchers' + 'LaunchConfiguration',
                 ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
@@ -133,7 +154,8 @@ class ElkTemplate(Template):
                 KeyName=Ref(self.parameters['ec2Key']),
                 AssociatePublicIpAddress=True, # set to false when dropped into private subnet
                 InstanceMonitoring=False,
-                UserData=self.build_bootstrap(['src/elasticsearch_bootstrap.sh']))
+                UserData=self.build_bootstrap(['src/elasticsearch_bootstrap.sh'], variable_declarations=startup_vars),
+                IamInstanceProfile=Ref('queryinstancesroleInstancePolicy'))
 
         self.add_resource(self.launch_config)
 
@@ -149,7 +171,7 @@ class ElkTemplate(Template):
             LoadBalancerNames=[Ref(self.elasticsearch_elb)],
             Tags=[
                 Tag('stage', 'dev', True),
-                Tag('name', 'elasticsearch', True)
+                Tag('Name', 'elasticsearch', True)
             ]) # https://github.com/elastic/elasticsearch-cloud-aws
         self.add_resource(self.es_asg)
 
@@ -273,6 +295,7 @@ class ElkStack(NetworkBase):
 
         elk_template.create_logstash(elk_config.get('logstash_ami_id'))
 
+        elk_template.create_instance_profiles_for_talking_to_ec2(env_name)
         elk_template.create_kibana(elk_config.get('kibana_ami_id'))
         # ----------------------------------
         self.add_child_template(elk_template)

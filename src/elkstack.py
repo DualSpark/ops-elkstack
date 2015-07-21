@@ -129,7 +129,6 @@ class ElkTemplate(Template):
                 InstanceType='t2.micro',
                 SecurityGroups=[Ref(self.common_security_group), Ref(self.elastic_sg), Ref(self.elastic_internal_sg)],
                 KeyName=Ref(self.parameters['ec2Key']),
-                Metadata=None,
                 AssociatePublicIpAddress=True, # set to false when dropped into private subnet
                 InstanceMonitoring=False,
                 UserData=self.build_bootstrap(['src/elasticsearch_bootstrap.sh']))

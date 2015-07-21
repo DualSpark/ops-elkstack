@@ -19,17 +19,17 @@ from environmentbase.networkbase import NetworkBase
 from environmentbase.cli import CLI
 from environmentbase.environmentbase import CONFIG_REQUIREMENTS
 from environmentbase.template import Template
-from troposphere import ec2, Tags, Base64, Ref, iam, GetAtt, GetAZs, Join, FindInMap
+from troposphere import ec2, Tags, Base64, Ref, iam, GetAtt, GetAZs, Join, FindInMap, Output
 from troposphere.ec2 import NetworkInterfaceProperty
 from troposphere.iam import Role, InstanceProfile
 from troposphere.iam import PolicyType as IAMPolicy, Policy
 from troposphere.sqs import Queue
+import troposphere.autoscaling as autoscaling
 import troposphere.elasticloadbalancing as elb
 import json
 import string
 import os
 import docopt
-
 
 class ElkTemplate(Template):
 
@@ -60,9 +60,8 @@ class ElkTemplate(Template):
                         "Resource": GetAtt("logstashincoming", "Arn")}]
             })]
 
-        self.add_instance_profile(layer_name="logstashsqsrole", iam_policies=self.policies, path_prefix=env_name)
-
     def create_elasticsearch(self, ami_id):
+        # Elasticsearch SG for ingress from logstash
         self.elastic_sg = self.add_resource(ec2.SecurityGroup('elasticsearchSecurityGroup',
             GroupDescription='For elasticsearch ingress from logstash',
             VpcId=Ref(self.vpc_id),
@@ -78,27 +77,21 @@ class ElkTemplate(Template):
                         SourceSecurityGroupId=Ref(self.common_security_group))]
             ))
 
-        elasticsearchinstance = ec2.Instance(
-            "es",
-            InstanceType="t2.micro",
-            ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
-            Tags=Tags(Name="es",),
-            UserData=self.build_bootstrap(['src/elasticsearch_bootstrap.sh']),
-            KeyName=Ref(self.parameters['ec2Key']),
-            NetworkInterfaces=[
-                NetworkInterfaceProperty(
-                    GroupSet=[
-                        Ref(self.common_security_group),
-                        Ref(self.elastic_sg)],
-                    AssociatePublicIpAddress='true',
-                    DeviceIndex='0',
-                    DeleteOnTermination='true',
-                    SubnetId=self.subnets['public'][0])])
-
-        self.add_resource(elasticsearchinstance)
-
-        instances = []
-        instances.append(elasticsearchinstance)
+        # Elastichsearch to Elasticsearch inter-node communication SG
+        self.elastic_internal_sg = self.add_resource(ec2.SecurityGroup('elasticsearchNodeSecurityGroup',
+            GroupDescription='For elasticsearch nodes to chatter to each other',
+            VpcId=Ref(self.vpc_id),
+            SecurityGroupEgress=[ec2.SecurityGroupRule(
+                        FromPort='9300',
+                        ToPort='9400',
+                        IpProtocol='tcp',
+                        SourceSecurityGroupId=Ref(self.elastic_sg))], # AWS bug: should be DestinationSecurityGroupId
+            SecurityGroupIngress= [ec2.SecurityGroupRule(
+                        FromPort='9300',
+                        ToPort='9400',
+                        IpProtocol='tcp',
+                        SourceSecurityGroupId=Ref(self.elastic_sg))]
+            ))
 
         # ELB for the instance
         self.elasticsearch_elb = self.add_resource(elb.LoadBalancer(
@@ -113,7 +106,6 @@ class ElkTemplate(Template):
             ),
             Scheme="internal",
             CrossZone=True,
-            Instances=[Ref(r) for r in instances],
             Listeners=[
                 elb.Listener(
                     LoadBalancerPort="9200",
@@ -131,6 +123,40 @@ class ElkTemplate(Template):
             )
         ))
 
+        # ASG launch config for instances
+        self.launch_config = autoscaling.LaunchConfiguration('ElastichSearchers' + 'LaunchConfiguration',
+                ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
+                InstanceType='t2.micro',
+                SecurityGroups=[Ref(self.common_security_group), Ref(self.elastic_sg), Ref(self.elastic_internal_sg)],
+                KeyName=Ref(self.parameters['ec2Key']),
+                Metadata=None,
+                AssociatePublicIpAddress=True, # set to false when dropped into private subnet
+                InstanceMonitoring=False,
+                UserData=self.build_bootstrap(['src/elasticsearch_bootstrap.sh']))
+
+        self.add_resource(self.launch_config)
+
+        # ASG with above launch config
+        self.es_asg = autoscaling.AutoScalingGroup('ElastichSearchers' + 'AutoScalingGroup',
+            AvailabilityZones=self.azs,
+            LaunchConfigurationName=Ref(self.launch_config),
+            MaxSize=1,
+            MinSize=1,
+            DesiredCapacity=1,
+            VPCZoneIdentifier=self.subnets['public'], # switch to private later
+            TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
+            LoadBalancerNames=[Ref(self.elasticsearch_elb)])
+
+        self.add_resource(self.es_asg)
+
+        self.add_output([
+            Output(
+                "ElasticSearchELBURL",
+                Description="ElasticSearch ELB URL",
+                Value=GetAtt(self.elasticsearch_elb, 'DNSName'),
+            ),
+        ])
+
     def create_logstash_outbound_sg(self):
         self.logstash_sg = self.add_resource(ec2.SecurityGroup(
             'logstashSecurityGroup',
@@ -141,11 +167,6 @@ class ElkTemplate(Template):
                         ToPort='9200',
                         IpProtocol='tcp',
                         SourceSecurityGroupId=Ref(self.elastic_sg))], # AWS bug: should be DestinationSecurityGroupId
-            # SecurityGroupIngress= [ec2.SecurityGroupRule(
-            #             FromPort='9200',
-            #             ToPort='9200',
-            #             IpProtocol='tcp',
-            #             SourceSecurityGroupId=Ref(self.elastic_sg))]
             ))
 
     def create_logstash(self, ami_id):
@@ -174,7 +195,6 @@ class ElkTemplate(Template):
         self.add_resource(logstash)
 
     def create_kibana(self, ami_id):
-        # This is open to the world, should switch to nginx for basic auth
         self.kibana_ingress_sg = self.add_resource(ec2.SecurityGroup(
             'kibanaIngressSecurityGroup',
             GroupDescription='For kibana ingress',
@@ -203,9 +223,9 @@ class ElkTemplate(Template):
             NetworkInterfaces=[
             NetworkInterfaceProperty(
                 GroupSet=[
-                    Ref(self.common_security_group),            # common
-                    Ref(self.kibana_ingress_sg),    # users can talk to kibana
-                    Ref(self.elastic_sg)],          # kibana can talk to the ES ELB
+                    Ref(self.common_security_group),    # common
+                    Ref(self.kibana_ingress_sg),        # users can talk to kibana
+                    Ref(self.elastic_sg)],              # kibana can talk to the ES ELB
                 AssociatePublicIpAddress='true',
                 DeviceIndex='0',
                 DeleteOnTermination='true',

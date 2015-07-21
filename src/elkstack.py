@@ -81,7 +81,7 @@ class ElkTemplate(Template):
         elasticsearchinstance = ec2.Instance(
             "es",
             InstanceType="t2.micro",
-            ImageId=FindInMap(Ref('RegionMap'), Ref('AWS::Region'), ami_id),
+            ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
             Tags=Tags(Name="es",),
             UserData=self.build_bootstrap(['src/elasticsearch_bootstrap.sh']),
             KeyName=Ref(self.parameters['ec2Key']),
@@ -155,7 +155,7 @@ class ElkTemplate(Template):
         logstash = ec2.Instance(
             "logstash",
             InstanceType="t2.micro",
-            ImageId=FindInMap(Ref('RegionMap'), Ref('AWS::Region'), ami_id),
+            ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
             Tags=Tags(Name="logstash",),
             UserData=self.build_bootstrap(['src/logstash_bootstrap.sh'], variable_declarations=startup_vars),
             KeyName=Ref(self.parameters['ec2Key']),
@@ -196,7 +196,7 @@ class ElkTemplate(Template):
         startup_vars.append(Join('=', ['ELASTICSEARCH_ELB_DNS_NAME', GetAtt(self.elasticsearch_elb, 'DNSName')]))
 
         kibana = ec2.Instance("kibana", InstanceType="t2.micro",
-            ImageId=FindInMap(Ref('RegionMap'), Ref('AWS::Region'), ami_id),
+            ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
             Tags=Tags(Name="kibana",), UserData=self.build_bootstrap(['src/kibana_bootstrap.sh'], variable_declarations= startup_vars),
             KeyName=Ref(self.parameters['ec2Key']),
             NetworkInterfaces=[
@@ -235,6 +235,7 @@ class ElkStack(NetworkBase):
 
         elk_template = ElkTemplate()
         self.add_common_params_to_child_template(elk_template)
+        self.load_ami_cache(elk_template)
         # ----------------------------------
         elk_template.create_logstash_queue()
 

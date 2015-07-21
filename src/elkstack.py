@@ -24,6 +24,7 @@ from troposphere.ec2 import NetworkInterfaceProperty
 from troposphere.iam import Role, InstanceProfile
 from troposphere.iam import PolicyType as IAMPolicy, Policy
 from troposphere.sqs import Queue
+from troposphere.autoscaling import Tag
 import troposphere.autoscaling as autoscaling
 import troposphere.elasticloadbalancing as elb
 import json
@@ -43,7 +44,7 @@ class ElkTemplate(Template):
     def create_instance_profiles_for_reading_sqs(self, env_name):
         # configured per https://www.elastic.co/guide/en/logstash/current/plugins-inputs-sqs.html
         self.policies = [iam.Policy(
-            PolicyName='logstashqueueaccess',
+            PolicyName='logstashsqsrole',
             PolicyDocument={
                 "Statement": [{
                     "Effect": "Allow",
@@ -59,6 +60,7 @@ class ElkTemplate(Template):
                         ],
                         "Resource": GetAtt("logstashincoming", "Arn")}]
             })]
+        self.add_instance_profile(layer_name="logstashsqsrole", iam_policies=self.policies, path_prefix=env_name)
 
     def create_elasticsearch(self, ami_id):
         # Elasticsearch SG for ingress from logstash
@@ -145,7 +147,10 @@ class ElkTemplate(Template):
             VPCZoneIdentifier=self.subnets['public'], # switch to private later
             TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
             LoadBalancerNames=[Ref(self.elasticsearch_elb)],
-            Tags=[Tags(elasticsearchEnv='dev')]) # https://github.com/elastic/elasticsearch-cloud-aws
+            Tags=[
+                Tag('stage', 'dev', True),
+                Tag('name', 'elasticsearch', True)
+            ]) # https://github.com/elastic/elasticsearch-cloud-aws
         self.add_resource(self.es_asg)
 
         self.add_output([
@@ -217,7 +222,8 @@ class ElkTemplate(Template):
 
         kibana = ec2.Instance("kibana", InstanceType="t2.micro",
             ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
-            Tags=Tags(Name="kibana",), UserData=self.build_bootstrap(['src/kibana_bootstrap.sh'], variable_declarations= startup_vars),
+            Tags=Tags(Name="kibana",),
+            UserData=self.build_bootstrap(['src/kibana_bootstrap.sh'], variable_declarations= startup_vars),
             KeyName=Ref(self.parameters['ec2Key']),
             NetworkInterfaces=[
             NetworkInterfaceProperty(

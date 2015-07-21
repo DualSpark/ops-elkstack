@@ -144,7 +144,9 @@ class ElkTemplate(Template):
             DesiredCapacity=1,
             VPCZoneIdentifier=self.subnets['public'], # switch to private later
             TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
-            LoadBalancerNames=[Ref(self.elasticsearch_elb)])
+            LoadBalancerNames=[Ref(self.elasticsearch_elb)],
+            Tags=[Tag('discovery.ec2.tag.stage', 'dev', True)]) # https://github.com/elastic/elasticsearch-cloud-aws
+        self.template.add_resource(self.es_asg)
 
         self.add_resource(self.es_asg)
 

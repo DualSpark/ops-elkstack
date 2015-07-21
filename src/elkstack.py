@@ -17,7 +17,7 @@ Options:
 
 from environmentbase.networkbase import NetworkBase
 from environmentbase.cli import CLI
-from environmentbase.environmentbase import TEMPLATE_REQUIREMENTS
+from environmentbase.environmentbase import CONFIG_REQUIREMENTS
 from environmentbase.template import Template
 from troposphere import ec2, Tags, Base64, Ref, iam, GetAtt, GetAZs, Join, FindInMap
 from troposphere.ec2 import NetworkInterfaceProperty
@@ -219,7 +219,7 @@ class ElkStack(NetworkBase):
     """
 
     def __init__(self, *args, **kwargs):
-        TEMPLATE_REQUIREMENTS['elk'] = [
+        CONFIG_REQUIREMENTS['elk'] = [
             ('elasticsearch_ami_id', basestring),
             ('logstash_ami_id', basestring),
             ('kibana_ami_id', basestring)

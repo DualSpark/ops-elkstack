@@ -55,3 +55,4 @@ target/
 
 .idea
 environmentbase.template
+config.json

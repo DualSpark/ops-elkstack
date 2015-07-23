@@ -17,7 +17,7 @@ Options:
 
 from environmentbase.networkbase import NetworkBase
 from environmentbase.cli import CLI
-from environmentbase.environmentbase import CONFIG_REQUIREMENTS
+from environmentbase.resources import CONFIG_REQUIREMENTS
 from environmentbase.template import Template
 from troposphere import ec2, Tags, Base64, Ref, iam, GetAtt, GetAZs, Join, FindInMap, Output
 from troposphere.ec2 import NetworkInterfaceProperty
@@ -31,11 +31,47 @@ import json
 import string
 import os
 import docopt
+from environmentbase import resources
+
+
 
 class ElkTemplate(Template):
 
-    def __init__(self, resource_name='ElkStack'):
-        super(ElkTemplate, self).__init__(resource_name)
+    E_BOOTSTRAP_SH = resources.get_resource('elasticsearch_bootstrap.sh', __name__)
+    L_BOOTSTRAP_SH = resources.get_resource('kibana_bootstrap.sh', __name__)
+    K_BOOTSTRAP_SH = resources.get_resource('logstash_bootstrap.sh', __name__)
+
+    DEFAULT_CONFIG = {
+        'elk': {
+            'elasticsearch_ami_id': 'amazonLinuxAmiId',
+            'logstash_ami_id': 'amazonLinuxAmiId',
+            'kibana_ami_id': 'amazonLinuxAmiId'
+        }
+    }
+
+    CONFIG_SCHEMA = {
+        'elk': {
+            'elasticsearch_ami_id': 'str',
+            'logstash_ami_id': 'str',
+            'kibana_ami_id': 'str'
+        }
+    }
+
+    def __init__(self, env_name, e_ami_id, l_ami_id, k_ami_id):
+        super(ElkTemplate, self).__init__('ElkStack')
+        self.env_name = env_name
+        self.e_ami_id = e_ami_id
+        self.l_ami_id = l_ami_id
+        self.k_ami_id = k_ami_id
+
+    def build_hook(self):
+        self.create_logstash_queue()
+        self.create_instance_profiles_for_reading_sqs(self.env_name)
+        self.create_elasticsearch(self.e_ami_id)
+        self.create_logstash_outbound_sg()
+        self.create_logstash(self.l_ami_id)
+        self.create_instance_profiles_for_talking_to_ec2(self.env_name)
+        self.create_kibana(self.k_ami_id)
 
     def create_logstash_queue(self):
         self.queue = Queue("logstashincoming", QueueName="logstashincoming")
@@ -154,7 +190,7 @@ class ElkTemplate(Template):
                 KeyName=Ref(self.parameters['ec2Key']),
                 AssociatePublicIpAddress=True, # set to false when dropped into private subnet
                 InstanceMonitoring=False,
-                UserData=self.build_bootstrap(['src/elasticsearch_bootstrap.sh'], variable_declarations=startup_vars),
+                UserData=self.build_bootstrap([ElkTemplate.E_BOOTSTRAP_SH], variable_declarations=startup_vars),
                 IamInstanceProfile=Ref('queryinstancesroleInstancePolicy'))
 
         self.add_resource(self.launch_config)
@@ -204,7 +240,7 @@ class ElkTemplate(Template):
             InstanceType="t2.micro",
             ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
             Tags=Tags(Name="logstash",),
-            UserData=self.build_bootstrap(['src/logstash_bootstrap.sh'], variable_declarations=startup_vars),
+            UserData=self.build_bootstrap([ElkTemplate.L_BOOTSTRAP_SH], variable_declarations=startup_vars),
             KeyName=Ref(self.parameters['ec2Key']),
             IamInstanceProfile=Ref('logstashsqsroleInstancePolicy'),
             NetworkInterfaces=[
@@ -245,7 +281,7 @@ class ElkTemplate(Template):
         kibana = ec2.Instance("kibana", InstanceType="t2.micro",
             ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
             Tags=Tags(Name="kibana",),
-            UserData=self.build_bootstrap(['src/kibana_bootstrap.sh'], variable_declarations= startup_vars),
+            UserData=self.build_bootstrap([ElkTemplate.K_BOOTSTRAP_SH], variable_declarations= startup_vars),
             KeyName=Ref(self.parameters['ec2Key']),
             NetworkInterfaces=[
             NetworkInterfaceProperty(
@@ -266,14 +302,13 @@ class ElkStack(NetworkBase):
     ELK stack template generation
     """
 
-    def __init__(self, *args, **kwargs):
-        CONFIG_REQUIREMENTS['elk'] = [
-            ('elasticsearch_ami_id', basestring),
-            ('logstash_ami_id', basestring),
-            ('kibana_ami_id', basestring)
-        ]
+    @staticmethod
+    def get_factory_defaults_hook():
+        return ElkTemplate.DEFAULT_CONFIG
 
-        super(ElkStack, self).__init__(*args, **kwargs)
+    @staticmethod
+    def get_config_schema_hook():
+        return ElkTemplate.CONFIG_SCHEMA
 
     def create_action(self):
         elk_config = self.config.get('elk')
@@ -281,23 +316,11 @@ class ElkStack(NetworkBase):
         self.initialize_template()
         self.construct_network()
 
-        elk_template = ElkTemplate()
-        self.add_common_params_to_child_template(elk_template)
-        self.load_ami_cache(elk_template)
-        # ----------------------------------
-        elk_template.create_logstash_queue()
+        elk_template = ElkTemplate(env_name,
+            elk_config.get('elasticsearch_ami_id'),
+            elk_config.get('logstash_ami_id'),
+            elk_config.get('kibana_ami_id'))
 
-        elk_template.create_instance_profiles_for_reading_sqs(env_name)
-
-        elk_template.create_elasticsearch(elk_config.get('elasticsearch_ami_id'))
-
-        elk_template.create_logstash_outbound_sg()
-
-        elk_template.create_logstash(elk_config.get('logstash_ami_id'))
-
-        elk_template.create_instance_profiles_for_talking_to_ec2(env_name)
-        elk_template.create_kibana(elk_config.get('kibana_ami_id'))
-        # ----------------------------------
         self.add_child_template(elk_template)
         self.write_template_to_file()
 

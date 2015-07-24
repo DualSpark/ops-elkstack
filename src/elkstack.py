@@ -34,8 +34,8 @@ class ElkTemplate(Template):
 
     # Load USER_DATA scripts from package
     E_BOOTSTRAP_SH = resources.get_resource('elasticsearch_bootstrap.sh', __name__)
-    L_BOOTSTRAP_SH = resources.get_resource('kibana_bootstrap.sh', __name__)
-    K_BOOTSTRAP_SH = resources.get_resource('logstash_bootstrap.sh', __name__)
+    L_BOOTSTRAP_SH = resources.get_resource('logstash_bootstrap.sh', __name__)
+    K_BOOTSTRAP_SH = resources.get_resource('kibana_bootstrap.sh', __name__)
 
     # default configuration values
     DEFAULT_CONFIG = {

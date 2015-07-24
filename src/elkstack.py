@@ -25,7 +25,7 @@ from troposphere.autoscaling import Tag
 import troposphere.autoscaling as autoscaling
 import troposphere.elasticloadbalancing as elb
 from environmentbase import resources
-
+from environmentbase.patterns import bastion
 
 class ElkTemplate(Template):
     """
@@ -339,6 +339,8 @@ class ElkStackController(NetworkBase):
 
         # Attach the NetworkBase: VPN, routing tables, public/private subnets, NAT instances
         self.construct_network()
+
+        self.add_child_template(bastion.Bastion())
 
         # Load some settings from the config file
         elk_config = self.config.get('elk')

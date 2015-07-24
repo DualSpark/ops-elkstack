@@ -17,25 +17,77 @@ Options:
 
 from environmentbase.networkbase import NetworkBase
 from environmentbase.cli import CLI
-from environmentbase.environmentbase import CONFIG_REQUIREMENTS
 from environmentbase.template import Template
-from troposphere import ec2, Tags, Base64, Ref, iam, GetAtt, GetAZs, Join, FindInMap, Output
+from troposphere import ec2, Tags, Ref, iam, GetAtt, Join, FindInMap, Output
 from troposphere.ec2 import NetworkInterfaceProperty
-from troposphere.iam import Role, InstanceProfile
-from troposphere.iam import PolicyType as IAMPolicy, Policy
 from troposphere.sqs import Queue
 from troposphere.autoscaling import Tag
 import troposphere.autoscaling as autoscaling
 import troposphere.elasticloadbalancing as elb
-import json
-import string
-import os
-import docopt
+from environmentbase import resources
+from environmentbase.patterns import bastion
 
 class ElkTemplate(Template):
+    """
+    Enhances basic template by adding elasticsearch, kibana and logstash services.
+    """
 
-    def __init__(self, resource_name='ElkStack'):
-        super(ElkTemplate, self).__init__(resource_name)
+    # Load USER_DATA scripts from package
+    E_BOOTSTRAP_SH = resources.get_resource('elasticsearch_bootstrap.sh', __name__)
+    L_BOOTSTRAP_SH = resources.get_resource('logstash_bootstrap.sh', __name__)
+    K_BOOTSTRAP_SH = resources.get_resource('kibana_bootstrap.sh', __name__)
+
+    # default configuration values
+    DEFAULT_CONFIG = {
+        'elk': {
+            'elasticsearch_ami_id': 'amazonLinuxAmiId',
+            'logstash_ami_id': 'amazonLinuxAmiId',
+            'kibana_ami_id': 'amazonLinuxAmiId'
+        }
+    }
+
+    # schema of expected types for config values
+    CONFIG_SCHEMA = {
+        'elk': {
+            'elasticsearch_ami_id': 'str',
+            'logstash_ami_id': 'str',
+            'kibana_ami_id': 'str'
+        }
+    }
+
+    # Collect all the values we need to assemble our ELK stack
+    def __init__(self, env_name, e_ami_id, l_ami_id, k_ami_id):
+        super(ElkTemplate, self).__init__('ElkStack')
+        self.env_name = env_name
+        self.e_ami_id = e_ami_id
+        self.l_ami_id = l_ami_id
+        self.k_ami_id = k_ami_id
+
+    # Called after add_child_template() has attached common parameters and some instance attributes:
+    # - RegionMap: Region to AMI map, allows template to be deployed in different regions without updating AMI ids
+    # - ec2Key: keyname to use for ssh authentication
+    # - vpcCidr: IP block claimed by whole VPC
+    # - vpcId: resource id of VPC
+    # - commonSecurityGroup: sg identifier for common allowed ports (22 in from VPC)
+    # - utilityBucket: S3 bucket name used to send logs to
+    # - availabilityZone[0-9]: Indexed names of AZs VPC is deployed to
+    # - [public|private]Subnet[0-9]: indexed and classified subnet identifiers
+    #
+    # and some instance attributes referencing the attached parameters:
+    # - self.vpc_cidr
+    # - self.vpc_id
+    # - self.common_security_group
+    # - self.utility_bucket
+    # - self.subnets: keyed by type and index (e.g. self.subnets['public'][1])
+    # - self.azs: List of parameter references
+    def build_hook(self):
+        self.create_logstash_queue()
+        self.create_instance_profiles_for_reading_sqs(self.env_name)
+        self.create_elasticsearch(self.e_ami_id)
+        self.create_logstash_outbound_sg()
+        self.create_logstash(self.l_ami_id)
+        self.create_instance_profiles_for_talking_to_ec2(self.env_name)
+        self.create_kibana(self.k_ami_id)
 
     def create_logstash_queue(self):
         self.queue = Queue("logstashincoming", QueueName="logstashincoming")
@@ -154,7 +206,7 @@ class ElkTemplate(Template):
                 KeyName=Ref(self.parameters['ec2Key']),
                 AssociatePublicIpAddress=True, # set to false when dropped into private subnet
                 InstanceMonitoring=False,
-                UserData=self.build_bootstrap(['src/elasticsearch_bootstrap.sh'], variable_declarations=startup_vars),
+                UserData=self.build_bootstrap([ElkTemplate.E_BOOTSTRAP_SH], variable_declarations=startup_vars),
                 IamInstanceProfile=Ref('queryinstancesroleInstancePolicy'))
 
         self.add_resource(self.launch_config)
@@ -204,7 +256,7 @@ class ElkTemplate(Template):
             InstanceType="t2.micro",
             ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
             Tags=Tags(Name="logstash",),
-            UserData=self.build_bootstrap(['src/logstash_bootstrap.sh'], variable_declarations=startup_vars),
+            UserData=self.build_bootstrap([ElkTemplate.L_BOOTSTRAP_SH], variable_declarations=startup_vars),
             KeyName=Ref(self.parameters['ec2Key']),
             IamInstanceProfile=Ref('logstashsqsroleInstancePolicy'),
             NetworkInterfaces=[
@@ -245,7 +297,7 @@ class ElkTemplate(Template):
         kibana = ec2.Instance("kibana", InstanceType="t2.micro",
             ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
             Tags=Tags(Name="kibana",),
-            UserData=self.build_bootstrap(['src/kibana_bootstrap.sh'], variable_declarations= startup_vars),
+            UserData=self.build_bootstrap([ElkTemplate.K_BOOTSTRAP_SH], variable_declarations= startup_vars),
             KeyName=Ref(self.parameters['ec2Key']),
             NetworkInterfaces=[
             NetworkInterfaceProperty(
@@ -261,50 +313,63 @@ class ElkTemplate(Template):
         self.add_resource(kibana)
 
 
-class ElkStack(NetworkBase):
+class ElkStackController(NetworkBase):
     """
-    ELK stack template generation
+    Coordinates ELK stack actions (create and deploy)
     """
 
-    def __init__(self, *args, **kwargs):
-        CONFIG_REQUIREMENTS['elk'] = [
-            ('elasticsearch_ami_id', basestring),
-            ('logstash_ami_id', basestring),
-            ('kibana_ami_id', basestring)
-        ]
+    # When no config.json file exists a new one is created using the 'factory default' file.  This function
+    # augments the factory default before it is written to file with the config values required by an ElkTemplate
+    @staticmethod
+    def get_factory_defaults_hook():
+        return ElkTemplate.DEFAULT_CONFIG
 
-        super(ElkStack, self).__init__(*args, **kwargs)
+    # When the user request to 'create' a new ELK template the config.json file is read in. This file is checked to
+    # ensure all required values are present. Because ELK stack has additional requirements beyond that of
+    # EnvironmentBase this function is used to add additional validation checks.
+    @staticmethod
+    def get_config_schema_hook():
+        return ElkTemplate.CONFIG_SCHEMA
 
+    # Override the default create action to construct an ELK stack
     def create_action(self):
-        elk_config = self.config.get('elk')
-        env_name = self.globals.get('environment_name', 'environmentbase')
+
+        # Create the top-level cloudformation template
         self.initialize_template()
+
+        # Attach the NetworkBase: VPN, routing tables, public/private subnets, NAT instances
         self.construct_network()
 
-        elk_template = ElkTemplate()
-        self.add_common_params_to_child_template(elk_template)
-        self.load_ami_cache(elk_template)
-        # ----------------------------------
-        elk_template.create_logstash_queue()
+        self.add_child_template(bastion.Bastion())
 
-        elk_template.create_instance_profiles_for_reading_sqs(env_name)
+        # Load some settings from the config file
+        elk_config = self.config.get('elk')
+        env_name = self.globals.get('environment_name', 'environmentbase')
 
-        elk_template.create_elasticsearch(elk_config.get('elasticsearch_ami_id'))
+        # Create our ELK Template (defined above)
+        elk_template = ElkTemplate(env_name,
+            elk_config.get('elasticsearch_ami_id'),
+            elk_config.get('logstash_ami_id'),
+            elk_config.get('kibana_ami_id'))
 
-        elk_template.create_logstash_outbound_sg()
-
-        elk_template.create_logstash(elk_config.get('logstash_ami_id'))
-
-        elk_template.create_instance_profiles_for_talking_to_ec2(env_name)
-        elk_template.create_kibana(elk_config.get('kibana_ami_id'))
-        # ----------------------------------
+        # Add the ELK template as a child of the top-level template
+        # Note: This function modifies the incoming child template by attaching some standard inputs. For details
+        # see ElkTemplate.build_hook() above.
+        # After parameters are added to the template it is serialized to file and uploaded to S3 (s3_utility_bucket).
+        # Finally a 'Stack' resource is added to the top-level template referencing the child template in S3 and
+        # assigning values to each of the input parameters.
         self.add_child_template(elk_template)
+
+        # Serialize top-level template to file
         self.write_template_to_file()
 
 
 def main():
+    # This cli object takes the documentation comment at the top of this file (__doc__) and parses it against the
+    # command line arguments (sys.argv).  Supported commands are create and deploy. The deploy function works fine as
+    # is. ElkStackController overrides the create action to include an ELK stack as an additional template.
     cli = CLI(doc=__doc__)
-    ElkStack(view=cli)
+    ElkStackController(view=cli)
 
 if __name__ == '__main__':
     main()

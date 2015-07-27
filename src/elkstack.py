@@ -207,7 +207,7 @@ class ElkTemplate(Template):
                 AssociatePublicIpAddress=False,
                 InstanceMonitoring=False,
                 UserData=self.build_bootstrap([ElkTemplate.E_BOOTSTRAP_SH], variable_declarations=startup_vars),
-                IamInstanceProfile=Ref('queryinstancesroleInstancePolicy'))
+                IamInstanceProfile=Ref('logstashsqsroleInstancePolicy'))
 
         self.add_resource(self.launch_config)
 
@@ -226,14 +226,6 @@ class ElkTemplate(Template):
                 Tag('Name', 'elasticsearch', True)
             ]) # https://github.com/elastic/elasticsearch-cloud-aws
         self.add_resource(self.es_asg)
-
-        self.add_output([
-            Output(
-                "ElasticSearchELBURL",
-                Description="ElasticSearch ELB URL",
-                Value=GetAtt(self.elasticsearch_elb, 'DNSName'),
-            ),
-        ])
 
     def create_logstash_outbound_sg(self):
         self.logstash_sg = self.add_resource(ec2.SecurityGroup(

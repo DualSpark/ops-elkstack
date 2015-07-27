@@ -354,6 +354,7 @@ class ElkTemplate(Template):
             AssociatePublicIpAddress=True, # set to false when dropped into private subnet
             InstanceMonitoring=False,
             UserData=self.build_bootstrap([ElkTemplate.K_BOOTSTRAP_SH], variable_declarations=startup_vars))
+        self.add_resource(self.kibana_launch_config)
 
         self.kibana_asg = autoscaling.AutoScalingGroup('Kibana' + 'AutoScalingGroup',
             AvailabilityZones=self.azs,

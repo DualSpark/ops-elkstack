@@ -85,7 +85,6 @@ mv /tmp/kibana.sh /etc/init.d/kibana
 chmod +x /etc/init.d/kibana
 
 sed -i "s|localhost:9200|$ELASTICSEARCH_ELB_DNS_NAME:9200|" /opt/kibana/config/kibana.yml
-sed -i "s|0.0.0.0|localhost|" /opt/kibana/config/kibana.yml
 
 yum -y install nginx httpd-tools
 htpasswd -bc /opt/kibana/.htpasswd kibanauser $KIBANA_PASSWORD
@@ -130,5 +129,6 @@ EOF
 
 mv -f /tmp/nginx.conf /etc/nginx/nginx.conf
 service nginx restart
-
+# sad hack to let elasticsearch ELB register instances before we come up.  503s causes kibana to crash.
+sleep 60
 service kibana start

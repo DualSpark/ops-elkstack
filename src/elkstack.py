@@ -279,8 +279,8 @@ class ElkTemplate(Template):
             VpcId=Ref(self.vpc_id),
             SecurityGroupEgress=[
                 ec2.SecurityGroupRule(
-                    FromPort='80',
-                    ToPort='80',
+                    FromPort='5601',
+                    ToPort='5601',
                     IpProtocol='tcp',
                     CidrIp='0.0.0.0/0'),
                 ec2.SecurityGroupRule(
@@ -291,8 +291,8 @@ class ElkTemplate(Template):
                     ],
             SecurityGroupIngress= [
                 ec2.SecurityGroupRule(
-                    FromPort='80',
-                    ToPort='80',
+                    FromPort='5601',
+                    ToPort='5601',
                     IpProtocol='tcp',
                     CidrIp='0.0.0.0/0'),
                 # for ELB healthcheck, okay to open to world
@@ -334,8 +334,8 @@ class ElkTemplate(Template):
             CrossZone=True,
             Listeners=[
                 elb.Listener(
-                    LoadBalancerPort="9200",
-                    InstancePort="9200",
+                    LoadBalancerPort="5601",
+                    InstancePort="5601",
                     Protocol="HTTP",
                 ),
             ],

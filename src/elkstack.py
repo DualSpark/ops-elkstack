@@ -108,7 +108,9 @@ class ElkTemplate(Template):
                             "sqs:ListQueues",
                             "sqs:SendMessage",
                             "sqs:SendMessageBatch",
-                            "sqs:ReceiveMessage"
+                            "sqs:ReceiveMessage",
+                            "sqs:DeleteMessage",
+                            "sqs:DeleteMessageBatch"
                         ],
                         "Resource": GetAtt("logstashincoming", "Arn")}]
             })]

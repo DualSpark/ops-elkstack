@@ -204,7 +204,7 @@ class ElkTemplate(Template):
                 InstanceType='t2.micro',
                 SecurityGroups=[Ref(self.common_security_group), Ref(self.elastic_sg), Ref(self.elastic_internal_sg)],
                 KeyName=Ref(self.parameters['ec2Key']),
-                AssociatePublicIpAddress=True, # set to false when dropped into private subnet
+                AssociatePublicIpAddress=False,
                 InstanceMonitoring=False,
                 UserData=self.build_bootstrap([ElkTemplate.E_BOOTSTRAP_SH], variable_declarations=startup_vars),
                 IamInstanceProfile=Ref('queryinstancesroleInstancePolicy'))
@@ -264,7 +264,7 @@ class ElkTemplate(Template):
                     GroupSet=[
                         Ref(self.common_security_group),
                         Ref(self.logstash_sg)],
-                    AssociatePublicIpAddress='true',
+                    AssociatePublicIpAddress='false',
                     DeviceIndex='0',
                     DeleteOnTermination='true',
                     SubnetId=self.subnets['private'][0])]

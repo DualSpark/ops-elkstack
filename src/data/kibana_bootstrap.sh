@@ -130,5 +130,7 @@ EOF
 mv -f /tmp/nginx.conf /etc/nginx/nginx.conf
 service nginx restart
 # sad hack to let elasticsearch ELB register instances before we come up.  503s causes kibana to crash.
-sleep 60
+# See https://github.com/elastic/kibana/pull/3033 .
+# not a problem for ELB healthchecks, nginx handles it.
+sleep 360
 service kibana start

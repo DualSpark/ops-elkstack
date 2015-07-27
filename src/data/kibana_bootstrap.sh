@@ -106,7 +106,11 @@ http {
                            '"\$request" \$status \$body_bytes_sent '
                            '"\$http_referer" "\$http_user_agent" "\$gzip_ratio"';
     error_log /var/log/nginx/notice.log notice;
-
+    server {
+        listen 81;
+        return 200;
+        access_log off;
+    }
     server {
         listen       80;
         auth_basic "Restricted Access";

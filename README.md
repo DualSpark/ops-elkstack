@@ -49,7 +49,7 @@ Next, you'll need to set the configuration values within the file located at con
 
 * within the 'template' section:
   * Set the value of ec2_key_default to the key you created above.
-  * Set the value of remote_access_cidr to a CIDR range that you want to be able to access the bastion host from. This is a single CIDR range (for now) and could be the network egress CIDR for the 23andMe corporate office, etc.
+  * Set the value of remote_access_cidr to a CIDR range that you want to be able to access the bastion host from. This is a single CIDR range (for now) and could be the network egress CIDR for a corporate office, etc.
 * within the 'network' section:
   * Set the values of the network size and CIDR base to your liking/needs. Note that this process will create a public and private subnet in each of the AWS Availability Zones configured (in order, up to 3).
 

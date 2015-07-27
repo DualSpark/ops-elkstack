@@ -73,3 +73,7 @@ This will gather information from your AWS account to know what regions and avai
 By using [cloudformation-environmentbase](https://github.com/DualSpark/cloudformation-environmentbase), a VPC is included in the generated Cloudformation template.  Check that project's [Readme](https://github.com/DualSpark/cloudformation-environmentbase/blob/master/README.md) to see more information about the VPC.
 
 A child Cloudformation stack is created for the ELK stack.  This allows more flexibility for updating the stack or removing it, but leaving the VPC intact.
+
+### Access via Elastic Load Balancer URLs
+
+The Kibana ELB is outputted from the ELK Cloudformation stack.  Kibana can be accessed by using that URL on port 5601.

@@ -171,7 +171,7 @@ class ElkTemplate(Template):
             AccessLoggingPolicy=elb.AccessLoggingPolicy(
                 Enabled=False,
             ),
-            Subnets=self.subnets['public'],  # should be from networkbase
+            Subnets=self.subnets['private'],  # should be from networkbase
             ConnectionDrainingPolicy=elb.ConnectionDrainingPolicy(
                 Enabled=True,
                 Timeout=300,
@@ -204,7 +204,7 @@ class ElkTemplate(Template):
                 InstanceType='t2.micro',
                 SecurityGroups=[Ref(self.common_security_group), Ref(self.elastic_sg), Ref(self.elastic_internal_sg)],
                 KeyName=Ref(self.parameters['ec2Key']),
-                AssociatePublicIpAddress=True, # set to false when dropped into private subnet
+                AssociatePublicIpAddress=False,
                 InstanceMonitoring=False,
                 UserData=self.build_bootstrap([ElkTemplate.E_BOOTSTRAP_SH], variable_declarations=startup_vars),
                 IamInstanceProfile=Ref('queryinstancesroleInstancePolicy'))
@@ -218,7 +218,7 @@ class ElkTemplate(Template):
             MaxSize=1,
             MinSize=1,
             DesiredCapacity=1,
-            VPCZoneIdentifier=self.subnets['public'], # switch to private later
+            VPCZoneIdentifier=self.subnets['private'],
             TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
             LoadBalancerNames=[Ref(self.elasticsearch_elb)],
             Tags=[
@@ -264,10 +264,10 @@ class ElkTemplate(Template):
                     GroupSet=[
                         Ref(self.common_security_group),
                         Ref(self.logstash_sg)],
-                    AssociatePublicIpAddress='true',
+                    AssociatePublicIpAddress='false',
                     DeviceIndex='0',
                     DeleteOnTermination='true',
-                    SubnetId=self.subnets['public'][0])]
+                    SubnetId=self.subnets['private'][0])]
             )
 
         self.add_resource(logstash)
@@ -351,7 +351,7 @@ class ElkTemplate(Template):
             MaxSize=1,
             MinSize=1,
             DesiredCapacity=1,
-            VPCZoneIdentifier=self.subnets['public'], # switch to private later
+            VPCZoneIdentifier=self.subnets['public'],
             TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
             LoadBalancerNames=[Ref(self.kibana_elb)],
             Tags=[

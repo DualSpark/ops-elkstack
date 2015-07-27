@@ -303,24 +303,6 @@ class ElkTemplate(Template):
                     CidrIp='0.0.0.0/0')]
             ))
 
-
-        # kibana = ec2.Instance("kibana", InstanceType="t2.micro",
-        #     ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
-        #     Tags=Tags(Name="kibana",),
-        #     UserData=self.build_bootstrap([ElkTemplate.K_BOOTSTRAP_SH], variable_declarations= startup_vars),
-        #     KeyName=Ref(self.parameters['ec2Key']),
-        #     NetworkInterfaces=[
-        #     NetworkInterfaceProperty(
-        #         GroupSet=[
-        #             Ref(self.common_security_group),    # common
-        #             Ref(self.kibana_ingress_sg),        # users can talk to kibana
-        #             Ref(self.elastic_sg)],              # kibana can talk to the ES ELB
-        #         AssociatePublicIpAddress='true',
-        #         DeviceIndex='0',
-        #         DeleteOnTermination='true',
-        #         SubnetId=self.subnets['public'][0])])
-        # self.add_resource(kibana)
-
         self.kibana_elb = self.add_resource(elb.LoadBalancer(
             'KibanaELB',
             AccessLoggingPolicy=elb.AccessLoggingPolicy(
@@ -358,7 +340,7 @@ class ElkTemplate(Template):
             InstanceType='t2.micro',
             SecurityGroups=[Ref(self.common_security_group), Ref(self.elastic_sg), Ref(self.kibana_ingress_sg)],
             KeyName=Ref(self.parameters['ec2Key']),
-            AssociatePublicIpAddress=True, # set to false when dropped into private subnet
+            AssociatePublicIpAddress=True,
             InstanceMonitoring=False,
             UserData=self.build_bootstrap([ElkTemplate.K_BOOTSTRAP_SH], variable_declarations=startup_vars))
         self.add_resource(self.kibana_launch_config)

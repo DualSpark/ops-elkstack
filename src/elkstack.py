@@ -277,11 +277,18 @@ class ElkTemplate(Template):
             'kibanaIngressSecurityGroup',
             GroupDescription='For kibana ingress',
             VpcId=Ref(self.vpc_id),
-            SecurityGroupEgress=[ec2.SecurityGroupRule(
-                FromPort='80',
-                ToPort='80',
-                IpProtocol='tcp',
-                CidrIp='0.0.0.0/0')], # AWS bug: should be DestinationSecurityGroupId
+            SecurityGroupEgress=[
+                ec2.SecurityGroupRule(
+                    FromPort='80',
+                    ToPort='80',
+                    IpProtocol='tcp',
+                    CidrIp='0.0.0.0/0'),
+                ec2.SecurityGroupRule(
+                    FromPort='81',
+                    ToPort='81',
+                    IpProtocol='tcp',
+                    CidrIp='0.0.0.0/0')
+                    ],
             SecurityGroupIngress= [
                 ec2.SecurityGroupRule(
                     FromPort='80',
@@ -332,7 +339,7 @@ class ElkTemplate(Template):
                     Protocol="HTTP",
                 ),
             ],
-            SecurityGroups=[Ref(self.common_security_group), Ref(self.kibana_ingress_sg), Ref(self.elastic_sg)],
+            SecurityGroups=[Ref(self.common_security_group), Ref(self.kibana_ingress_sg)],
             HealthCheck=elb.HealthCheck(
                 Target=Join("", ["HTTP:", "81", "/"]),
                 HealthyThreshold="3",

@@ -364,7 +364,7 @@ class ElkTemplate(Template):
             DesiredCapacity=1,
             VPCZoneIdentifier=self.subnets['public'], # switch to private later
             TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
-            LoadBalancerNames=[Ref(self.elasticsearch_elb)],
+            LoadBalancerNames=[Ref(self.kibana_elb)],
             Tags=[
                 Tag('stage', 'dev', True),
                 Tag('Name', 'kibana', True)

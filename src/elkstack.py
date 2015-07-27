@@ -277,41 +277,96 @@ class ElkTemplate(Template):
             'kibanaIngressSecurityGroup',
             GroupDescription='For kibana ingress',
             VpcId=Ref(self.vpc_id),
-            SecurityGroupEgress=[ec2.SecurityGroupRule(
-                FromPort='80',
-                ToPort='80',
-                IpProtocol='tcp',
-                CidrIp='0.0.0.0/0')], # AWS bug: should be DestinationSecurityGroupId
-            SecurityGroupIngress= [ec2.SecurityGroupRule(
-                FromPort='80',
-                ToPort='80',
-                IpProtocol='tcp',
-                CidrIp='0.0.0.0/0')]
+            SecurityGroupEgress=[
+                ec2.SecurityGroupRule(
+                    FromPort='5601',
+                    ToPort='5601',
+                    IpProtocol='tcp',
+                    CidrIp='0.0.0.0/0'),
+                ec2.SecurityGroupRule(
+                    FromPort='81',
+                    ToPort='81',
+                    IpProtocol='tcp',
+                    CidrIp='0.0.0.0/0')
+                    ],
+            SecurityGroupIngress= [
+                ec2.SecurityGroupRule(
+                    FromPort='5601',
+                    ToPort='5601',
+                    IpProtocol='tcp',
+                    CidrIp='0.0.0.0/0'),
+                # for ELB healthcheck, okay to open to world
+                ec2.SecurityGroupRule(
+                    FromPort='81',
+                    ToPort='81',
+                    IpProtocol='tcp',
+                    CidrIp='0.0.0.0/0')]
             ))
 
+        self.kibana_elb = self.add_resource(elb.LoadBalancer(
+            'KibanaELB',
+            AccessLoggingPolicy=elb.AccessLoggingPolicy(
+                Enabled=False,
+            ),
+            Subnets=self.subnets['public'],  # should be from networkbase
+            ConnectionDrainingPolicy=elb.ConnectionDrainingPolicy(
+                Enabled=True,
+                Timeout=300,
+            ),
+            CrossZone=True,
+            Listeners=[
+                elb.Listener(
+                    LoadBalancerPort="5601",
+                    InstancePort="5601",
+                    Protocol="HTTP",
+                ),
+            ],
+            SecurityGroups=[Ref(self.common_security_group), Ref(self.kibana_ingress_sg)],
+            HealthCheck=elb.HealthCheck(
+                Target=Join("", ["HTTP:", "81", "/"]),
+                HealthyThreshold="3",
+                UnhealthyThreshold="10",
+                Interval="30",
+                Timeout="5",
+            )
+        ))
         # Not DRY:
         startup_vars = []
         startup_vars.append(Join('=', ['ELASTICSEARCH_ELB_DNS_NAME', GetAtt(self.elasticsearch_elb, 'DNSName')]))
         startup_vars.append(Join('=', ['KIBANA_PASSWORD', 'kpassword'])) # move to input from user
 
-        kibana = ec2.Instance("kibana", InstanceType="t2.micro",
+        self.kibana_launch_config = autoscaling.LaunchConfiguration('Kibana' + 'LaunchConfiguration',
             ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
-            Tags=Tags(Name="kibana",),
-            UserData=self.build_bootstrap([ElkTemplate.K_BOOTSTRAP_SH], variable_declarations= startup_vars),
+            InstanceType='t2.micro',
+            SecurityGroups=[Ref(self.common_security_group), Ref(self.elastic_sg), Ref(self.kibana_ingress_sg)],
             KeyName=Ref(self.parameters['ec2Key']),
-            NetworkInterfaces=[
-            NetworkInterfaceProperty(
-                GroupSet=[
-                    Ref(self.common_security_group),    # common
-                    Ref(self.kibana_ingress_sg),        # users can talk to kibana
-                    Ref(self.elastic_sg)],              # kibana can talk to the ES ELB
-                AssociatePublicIpAddress='true',
-                DeviceIndex='0',
-                DeleteOnTermination='true',
-                SubnetId=self.subnets['public'][0])])
+            AssociatePublicIpAddress=True,
+            InstanceMonitoring=False,
+            UserData=self.build_bootstrap([ElkTemplate.K_BOOTSTRAP_SH], variable_declarations=startup_vars))
+        self.add_resource(self.kibana_launch_config)
 
-        self.add_resource(kibana)
+        self.kibana_asg = autoscaling.AutoScalingGroup('Kibana' + 'AutoScalingGroup',
+            AvailabilityZones=self.azs,
+            LaunchConfigurationName=Ref(self.kibana_launch_config),
+            MaxSize=1,
+            MinSize=1,
+            DesiredCapacity=1,
+            VPCZoneIdentifier=self.subnets['public'], # switch to private later
+            TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
+            LoadBalancerNames=[Ref(self.kibana_elb)],
+            Tags=[
+                Tag('stage', 'dev', True),
+                Tag('Name', 'kibana', True)
+            ])
+        self.add_resource(self.kibana_asg)
 
+        self.add_output([
+            Output(
+                "KibanaELBURL",
+                Description="Kibana ELB URL",
+                Value=GetAtt(self.kibana_elb, 'DNSName'),
+            ),
+        ])
 
 class ElkStackController(NetworkBase):
     """

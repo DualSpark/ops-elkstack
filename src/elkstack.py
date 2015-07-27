@@ -251,26 +251,31 @@ class ElkTemplate(Template):
         startup_vars = []
         startup_vars.append(Join('=', ['ELASTICSEARCH_ELB_DNS_NAME', GetAtt(self.elasticsearch_elb, 'DNSName')]))
 
-        logstash = ec2.Instance(
-            "logstash",
-            InstanceType="t2.micro",
+        self.logstash_launch_config = autoscaling.LaunchConfiguration('Logstashers' + 'LaunchConfiguration',
             ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
-            Tags=Tags(Name="logstash",),
-            UserData=self.build_bootstrap([ElkTemplate.L_BOOTSTRAP_SH], variable_declarations=startup_vars),
+            InstanceType='t2.micro',
+            SecurityGroups=[Ref(self.common_security_group), Ref(self.logstash_sg)],
             KeyName=Ref(self.parameters['ec2Key']),
-            IamInstanceProfile=Ref('logstashsqsroleInstancePolicy'),
-            NetworkInterfaces=[
-                NetworkInterfaceProperty(
-                    GroupSet=[
-                        Ref(self.common_security_group),
-                        Ref(self.logstash_sg)],
-                    AssociatePublicIpAddress='false',
-                    DeviceIndex='0',
-                    DeleteOnTermination='true',
-                    SubnetId=self.subnets['private'][0])]
-            )
+            AssociatePublicIpAddress=False,
+            InstanceMonitoring=False,
+            UserData=self.build_bootstrap([ElkTemplate.L_BOOTSTRAP_SH], variable_declarations=startup_vars),
+            IamInstanceProfile=Ref('queryinstancesroleInstancePolicy'))
+        self.add_resource(self.logstash_launch_config)
 
-        self.add_resource(logstash)
+        self.logstash_asg = autoscaling.AutoScalingGroup('Logstashers' + 'AutoScalingGroup',
+            AvailabilityZones=self.azs,
+            LaunchConfigurationName=Ref(self.logstash_launch_config),
+            MaxSize=1,
+            MinSize=1,
+            DesiredCapacity=1,
+            VPCZoneIdentifier=self.subnets['private'],
+            TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
+            # LoadBalancerNames=[Ref(self.elasticsearch_elb)], # TODO: remove
+            Tags=[
+                Tag('stage', 'dev', True),
+                Tag('Name', 'logstash', True)
+            ])
+        self.add_resource(self.logstash_asg)
 
     def create_kibana(self, ami_id):
         self.kibana_ingress_sg = self.add_resource(ec2.SecurityGroup(

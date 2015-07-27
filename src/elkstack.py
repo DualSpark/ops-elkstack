@@ -199,7 +199,7 @@ class ElkTemplate(Template):
         startup_vars.append(Join('=', ['REGION', Ref('AWS::Region')]))
 
         # ASG launch config for instances
-        self.launch_config = autoscaling.LaunchConfiguration('ElastichSearchers' + 'LaunchConfiguration',
+        self.launch_config = self.add_resource(autoscaling.LaunchConfiguration('ElastichSearchers' + 'LaunchConfiguration',
                 ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
                 InstanceType='t2.micro',
                 SecurityGroups=[Ref(self.common_security_group), Ref(self.elastic_sg), Ref(self.elastic_internal_sg)],
@@ -207,12 +207,10 @@ class ElkTemplate(Template):
                 AssociatePublicIpAddress=False,
                 InstanceMonitoring=False,
                 UserData=self.build_bootstrap([ElkTemplate.E_BOOTSTRAP_SH], variable_declarations=startup_vars),
-                IamInstanceProfile=Ref('queryinstancesroleInstancePolicy'))
-
-        self.add_resource(self.launch_config)
+                IamInstanceProfile=Ref('queryinstancesroleInstancePolicy')))
 
         # ASG with above launch config
-        self.es_asg = autoscaling.AutoScalingGroup('ElastichSearchers' + 'AutoScalingGroup',
+        self.es_asg = self.add_resource(autoscaling.AutoScalingGroup('ElastichSearchers' + 'AutoScalingGroup',
             AvailabilityZones=self.azs,
             LaunchConfigurationName=Ref(self.launch_config),
             MaxSize=1,
@@ -225,7 +223,7 @@ class ElkTemplate(Template):
                 Tag('stage', 'dev', True),
                 Tag('Name', 'elasticsearch', True)
             ]) # https://github.com/elastic/elasticsearch-cloud-aws
-        self.add_resource(self.es_asg)
+        )
 
     def create_logstash_outbound_sg(self):
         self.logstash_sg = self.add_resource(ec2.SecurityGroup(
@@ -262,7 +260,6 @@ class ElkTemplate(Template):
             DesiredCapacity=1,
             VPCZoneIdentifier=self.subnets['private'],
             TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
-            # LoadBalancerNames=[Ref(self.elasticsearch_elb)], # TODO: remove
             Tags=[
                 Tag('stage', 'dev', True),
                 Tag('Name', 'logstash', True)
@@ -351,10 +348,9 @@ class ElkTemplate(Template):
             VPCZoneIdentifier=self.subnets['public'],
             TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
             LoadBalancerNames=[Ref(self.kibana_elb)],
-            Tags=[
-                Tag('stage', 'dev', True),
-                Tag('Name', 'kibana', True)
-            ])
+            Tags=[Tag('Name', 'kibana', True)],
+            DependsOn='ElastichSearchersAutoScalingGroup')
+
         self.add_resource(self.kibana_asg)
 
         self.add_output([

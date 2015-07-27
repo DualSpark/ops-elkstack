@@ -171,7 +171,7 @@ class ElkTemplate(Template):
             AccessLoggingPolicy=elb.AccessLoggingPolicy(
                 Enabled=False,
             ),
-            Subnets=self.subnets['public'],  # should be from networkbase
+            Subnets=self.subnets['private'],  # should be from networkbase
             ConnectionDrainingPolicy=elb.ConnectionDrainingPolicy(
                 Enabled=True,
                 Timeout=300,
@@ -218,7 +218,7 @@ class ElkTemplate(Template):
             MaxSize=1,
             MinSize=1,
             DesiredCapacity=1,
-            VPCZoneIdentifier=self.subnets['public'], # switch to private later
+            VPCZoneIdentifier=self.subnets['private'],
             TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
             LoadBalancerNames=[Ref(self.elasticsearch_elb)],
             Tags=[
@@ -267,7 +267,7 @@ class ElkTemplate(Template):
                     AssociatePublicIpAddress='true',
                     DeviceIndex='0',
                     DeleteOnTermination='true',
-                    SubnetId=self.subnets['public'][0])]
+                    SubnetId=self.subnets['private'][0])]
             )
 
         self.add_resource(logstash)
@@ -351,7 +351,7 @@ class ElkTemplate(Template):
             MaxSize=1,
             MinSize=1,
             DesiredCapacity=1,
-            VPCZoneIdentifier=self.subnets['public'], # switch to private later
+            VPCZoneIdentifier=self.subnets['public'],
             TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
             LoadBalancerNames=[Ref(self.kibana_elb)],
             Tags=[

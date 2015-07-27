@@ -132,5 +132,5 @@ service nginx restart
 # sad hack to let elasticsearch ELB register instances before we come up.  503s causes kibana to crash.
 # See https://github.com/elastic/kibana/pull/3033 .
 # not a problem for ELB healthchecks, nginx handles it.
-sleep 360
+sleep 60
 service kibana start

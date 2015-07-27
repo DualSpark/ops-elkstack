@@ -108,7 +108,9 @@ class ElkTemplate(Template):
                             "sqs:ListQueues",
                             "sqs:SendMessage",
                             "sqs:SendMessageBatch",
-                            "sqs:ReceiveMessage"
+                            "sqs:ReceiveMessage",
+                            "sqs:DeleteMessage",
+                            "sqs:DeleteMessageBatch"
                         ],
                         "Resource": GetAtt("logstashincoming", "Arn")}]
             })]
@@ -199,7 +201,7 @@ class ElkTemplate(Template):
         startup_vars.append(Join('=', ['REGION', Ref('AWS::Region')]))
 
         # ASG launch config for instances
-        self.launch_config = autoscaling.LaunchConfiguration('ElastichSearchers' + 'LaunchConfiguration',
+        self.launch_config = self.add_resource(autoscaling.LaunchConfiguration('ElasticSearchers' + 'LaunchConfiguration',
                 ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
                 InstanceType='t2.micro',
                 SecurityGroups=[Ref(self.common_security_group), Ref(self.elastic_sg), Ref(self.elastic_internal_sg)],
@@ -207,12 +209,10 @@ class ElkTemplate(Template):
                 AssociatePublicIpAddress=False,
                 InstanceMonitoring=False,
                 UserData=self.build_bootstrap([ElkTemplate.E_BOOTSTRAP_SH], variable_declarations=startup_vars),
-                IamInstanceProfile=Ref('queryinstancesroleInstancePolicy'))
-
-        self.add_resource(self.launch_config)
+                IamInstanceProfile=Ref('queryinstancesroleInstancePolicy')))
 
         # ASG with above launch config
-        self.es_asg = autoscaling.AutoScalingGroup('ElastichSearchers' + 'AutoScalingGroup',
+        self.es_asg = self.add_resource(autoscaling.AutoScalingGroup('ElasticSearchers' + 'AutoScalingGroup',
             AvailabilityZones=self.azs,
             LaunchConfigurationName=Ref(self.launch_config),
             MaxSize=1,
@@ -225,15 +225,7 @@ class ElkTemplate(Template):
                 Tag('stage', 'dev', True),
                 Tag('Name', 'elasticsearch', True)
             ]) # https://github.com/elastic/elasticsearch-cloud-aws
-        self.add_resource(self.es_asg)
-
-        self.add_output([
-            Output(
-                "ElasticSearchELBURL",
-                Description="ElasticSearch ELB URL",
-                Value=GetAtt(self.elasticsearch_elb, 'DNSName'),
-            ),
-        ])
+        )
 
     def create_logstash_outbound_sg(self):
         self.logstash_sg = self.add_resource(ec2.SecurityGroup(
@@ -251,26 +243,30 @@ class ElkTemplate(Template):
         startup_vars = []
         startup_vars.append(Join('=', ['ELASTICSEARCH_ELB_DNS_NAME', GetAtt(self.elasticsearch_elb, 'DNSName')]))
 
-        logstash = ec2.Instance(
-            "logstash",
-            InstanceType="t2.micro",
+        self.logstash_launch_config = autoscaling.LaunchConfiguration('Logstashers' + 'LaunchConfiguration',
             ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
-            Tags=Tags(Name="logstash",),
-            UserData=self.build_bootstrap([ElkTemplate.L_BOOTSTRAP_SH], variable_declarations=startup_vars),
+            InstanceType='t2.micro',
+            SecurityGroups=[Ref(self.common_security_group), Ref(self.logstash_sg)],
             KeyName=Ref(self.parameters['ec2Key']),
-            IamInstanceProfile=Ref('logstashsqsroleInstancePolicy'),
-            NetworkInterfaces=[
-                NetworkInterfaceProperty(
-                    GroupSet=[
-                        Ref(self.common_security_group),
-                        Ref(self.logstash_sg)],
-                    AssociatePublicIpAddress='false',
-                    DeviceIndex='0',
-                    DeleteOnTermination='true',
-                    SubnetId=self.subnets['private'][0])]
-            )
+            AssociatePublicIpAddress=False,
+            InstanceMonitoring=False,
+            UserData=self.build_bootstrap([ElkTemplate.L_BOOTSTRAP_SH], variable_declarations=startup_vars),
+            IamInstanceProfile=Ref('logstashsqsroleInstancePolicy'))
+        self.add_resource(self.logstash_launch_config)
 
-        self.add_resource(logstash)
+        self.logstash_asg = autoscaling.AutoScalingGroup('Logstashers' + 'AutoScalingGroup',
+            AvailabilityZones=self.azs,
+            LaunchConfigurationName=Ref(self.logstash_launch_config),
+            MaxSize=1,
+            MinSize=1,
+            DesiredCapacity=1,
+            VPCZoneIdentifier=self.subnets['private'],
+            TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
+            Tags=[
+                Tag('stage', 'dev', True),
+                Tag('Name', 'logstash', True)
+            ])
+        self.add_resource(self.logstash_asg)
 
     def create_kibana(self, ami_id):
         self.kibana_ingress_sg = self.add_resource(ec2.SecurityGroup(
@@ -354,10 +350,9 @@ class ElkTemplate(Template):
             VPCZoneIdentifier=self.subnets['public'],
             TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
             LoadBalancerNames=[Ref(self.kibana_elb)],
-            Tags=[
-                Tag('stage', 'dev', True),
-                Tag('Name', 'kibana', True)
-            ])
+            Tags=[Tag('Name', 'kibana', True)],
+            DependsOn='ElasticSearchersAutoScalingGroup')
+
         self.add_resource(self.kibana_asg)
 
         self.add_output([

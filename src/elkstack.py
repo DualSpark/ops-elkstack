@@ -207,7 +207,7 @@ class ElkTemplate(Template):
                 AssociatePublicIpAddress=False,
                 InstanceMonitoring=False,
                 UserData=self.build_bootstrap([ElkTemplate.E_BOOTSTRAP_SH], variable_declarations=startup_vars),
-                IamInstanceProfile=Ref('logstashsqsroleInstancePolicy'))
+                IamInstanceProfile=Ref('queryinstancesroleInstancePolicy'))
 
         self.add_resource(self.launch_config)
 
@@ -251,7 +251,7 @@ class ElkTemplate(Template):
             AssociatePublicIpAddress=False,
             InstanceMonitoring=False,
             UserData=self.build_bootstrap([ElkTemplate.L_BOOTSTRAP_SH], variable_declarations=startup_vars),
-            IamInstanceProfile=Ref('queryinstancesroleInstancePolicy'))
+            IamInstanceProfile=Ref('logstashsqsroleInstancePolicy'))
         self.add_resource(self.logstash_launch_config)
 
         self.logstash_asg = autoscaling.AutoScalingGroup('Logstashers' + 'AutoScalingGroup',

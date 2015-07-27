@@ -199,7 +199,7 @@ class ElkTemplate(Template):
         startup_vars.append(Join('=', ['REGION', Ref('AWS::Region')]))
 
         # ASG launch config for instances
-        self.launch_config = self.add_resource(autoscaling.LaunchConfiguration('ElastichSearchers' + 'LaunchConfiguration',
+        self.launch_config = self.add_resource(autoscaling.LaunchConfiguration('ElasticSearchers' + 'LaunchConfiguration',
                 ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
                 InstanceType='t2.micro',
                 SecurityGroups=[Ref(self.common_security_group), Ref(self.elastic_sg), Ref(self.elastic_internal_sg)],
@@ -210,7 +210,7 @@ class ElkTemplate(Template):
                 IamInstanceProfile=Ref('queryinstancesroleInstancePolicy')))
 
         # ASG with above launch config
-        self.es_asg = self.add_resource(autoscaling.AutoScalingGroup('ElastichSearchers' + 'AutoScalingGroup',
+        self.es_asg = self.add_resource(autoscaling.AutoScalingGroup('ElasticSearchers' + 'AutoScalingGroup',
             AvailabilityZones=self.azs,
             LaunchConfigurationName=Ref(self.launch_config),
             MaxSize=1,
@@ -349,7 +349,7 @@ class ElkTemplate(Template):
             TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
             LoadBalancerNames=[Ref(self.kibana_elb)],
             Tags=[Tag('Name', 'kibana', True)],
-            DependsOn='ElastichSearchersAutoScalingGroup')
+            DependsOn='ElasticSearchersAutoScalingGroup')
 
         self.add_resource(self.kibana_asg)
 

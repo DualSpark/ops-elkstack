@@ -72,7 +72,14 @@ This will gather information from your AWS account to know what regions and avai
 
 By using [cloudformation-environmentbase](https://github.com/DualSpark/cloudformation-environmentbase), a VPC is included in the generated Cloudformation template.  Check that project's [Readme](https://github.com/DualSpark/cloudformation-environmentbase/blob/master/README.md) to see more information about the VPC.
 
-A child Cloudformation stack is created for the ELK stack.  This allows more flexibility for updating the stack or removing it, but leaving the VPC intact.
+A child Cloudformation stack is created for the ELK stack.  This allows more flexibility for updating the stack or removing it, but leaving the VPC intact.  This child stack is stored in the S3 bucket referenced in config.json.  The parent stack refers to the stack by its S3 URL.  Snippet showing the reference:
+
+```
+"ElkStackStack":{
+"Type":"AWS::CloudFormation::Stack",
+"Properties":{
+"TemplateURL":"https://BUCKETNAME.s3.amazonaws.com/devtools/cloudformation/ElkStack.1438189565.template"
+```
 
 ### Access via Elastic Load Balancer URLs
 

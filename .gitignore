@@ -54,5 +54,6 @@ docs/_build/
 target/
 
 .idea
-environmentbase.template
+templates/*
 config.json
+ami_cache.json

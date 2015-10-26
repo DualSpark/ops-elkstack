@@ -1,10 +1,12 @@
+#!/usr/bin/env python
+
 """
 elkstack
 
 Tool bundle manages generation, deployment, and feedback of cloudformation resources.
 
 Usage:
-    elkstack (create|deploy) [--config-file <FILE_LOCATION>] [--debug] [--template-file=<TEMPLATE_FILE>]
+    elkstack (init|create|deploy|delete) [--config-file <FILE_LOCATION>] [--debug] [--template-file=<TEMPLATE_FILE>]
 
 Options:
   -h --help                            Show this screen.
@@ -16,6 +18,7 @@ Options:
 """
 
 from environmentbase.networkbase import NetworkBase
+from environmentbase.environmentbase import EnvConfig
 from environmentbase.cli import CLI
 from environmentbase.template import Template
 from troposphere import ec2, Tags, Ref, iam, GetAtt, Join, FindInMap, Output
@@ -37,31 +40,41 @@ class ElkTemplate(Template):
     L_BOOTSTRAP_SH = resources.get_resource('logstash_bootstrap.sh', __name__)
     K_BOOTSTRAP_SH = resources.get_resource('kibana_bootstrap.sh', __name__)
 
-    # default configuration values
-    DEFAULT_CONFIG = {
-        'elk': {
-            'elasticsearch_ami_id': 'amazonLinuxAmiId',
-            'logstash_ami_id': 'amazonLinuxAmiId',
-            'kibana_ami_id': 'amazonLinuxAmiId'
+    # When no config.json file exists a new one is created using the 'factory default' file.  This function
+    # augments the factory default before it is written to file with the config values required by an ElkTemplate
+    @staticmethod
+    def get_factory_defaults():
+        return {
+            'elk': {
+                'elasticsearch_ami_id': 'amazonLinuxAmiId',
+                'logstash_ami_id': 'amazonLinuxAmiId',
+                'kibana_ami_id': 'amazonLinuxAmiId'
+            }
         }
-    }
 
-    # schema of expected types for config values
-    CONFIG_SCHEMA = {
-        'elk': {
-            'elasticsearch_ami_id': 'str',
-            'logstash_ami_id': 'str',
-            'kibana_ami_id': 'str'
+    # When the user request to 'create' a new ELK template the config.json file is read in. This file is checked to
+    # ensure all required values are present. Because ELK stack has additional requirements beyond that of
+    # EnvironmentBase this function is used to add additional validation checks.
+    @staticmethod
+    def get_config_schema():
+        return {
+            'elk': {
+                'elasticsearch_ami_id': 'str',
+                'logstash_ami_id': 'str',
+                'kibana_ami_id': 'str'
+            }
         }
-    }
+
 
     # Collect all the values we need to assemble our ELK stack
-    def __init__(self, env_name, e_ami_id, l_ami_id, k_ami_id):
+    def __init__(self, env_name, e_ami_id, l_ami_id, k_ami_id, public_subnet_layer='public', private_subnet_layer='private'):
         super(ElkTemplate, self).__init__('ElkStack')
         self.env_name = env_name
         self.e_ami_id = e_ami_id
         self.l_ami_id = l_ami_id
         self.k_ami_id = k_ami_id
+        self.public_subnet_layer = public_subnet_layer
+        self.private_subnet_layer = private_subnet_layer
 
     # Called after add_child_template() has attached common parameters and some instance attributes:
     # - RegionMap: Region to AMI map, allows template to be deployed in different regions without updating AMI ids
@@ -78,7 +91,7 @@ class ElkTemplate(Template):
     # - self.vpc_id
     # - self.common_security_group
     # - self.utility_bucket
-    # - self.subnets: keyed by type and index (e.g. self.subnets['public'][1])
+    # - self.subnets: keyed by type, layer name, and index (e.g. self.subnets['public']['web'][1])
     # - self.azs: List of parameter references
     def build_hook(self):
         self.create_logstash_queue()
@@ -138,23 +151,23 @@ class ElkTemplate(Template):
         # Elasticsearch SG for ingress from logstash
         self.elastic_sg = self.add_resource(ec2.SecurityGroup('elasticsearchSecurityGroup',
             GroupDescription='For elasticsearch ingress from logstash',
-            VpcId=Ref(self.vpc_id),
+            VpcId=self.vpc_id,
             SecurityGroupEgress=[ec2.SecurityGroupRule(
                         FromPort='9200',
                         ToPort='9200',
                         IpProtocol='tcp',
-                        SourceSecurityGroupId=Ref(self.common_security_group))], # AWS bug: should be DestinationSecurityGroupId
+                        SourceSecurityGroupId=self.common_security_group)], # AWS bug: should be DestinationSecurityGroupId
             SecurityGroupIngress= [ec2.SecurityGroupRule(
                         FromPort='9200',
                         ToPort='9200',
                         IpProtocol='tcp',
-                        SourceSecurityGroupId=Ref(self.common_security_group))]
+                        SourceSecurityGroupId=self.common_security_group)]
             ))
 
         # Elastichsearch to Elasticsearch inter-node communication SG
         self.elastic_internal_sg = self.add_resource(ec2.SecurityGroup('elasticsearchNodeSecurityGroup',
             GroupDescription='For elasticsearch nodes to chatter to each other',
-            VpcId=Ref(self.vpc_id),
+            VpcId=self.vpc_id,
             SecurityGroupEgress=[ec2.SecurityGroupRule(
                         FromPort='9300',
                         ToPort='9400',
@@ -173,7 +186,7 @@ class ElkTemplate(Template):
             AccessLoggingPolicy=elb.AccessLoggingPolicy(
                 Enabled=False,
             ),
-            Subnets=self.subnets['private'],  # should be from networkbase
+            Subnets=self.subnets['private'][self.private_subnet_layer],  # should be from networkbase
             ConnectionDrainingPolicy=elb.ConnectionDrainingPolicy(
                 Enabled=True,
                 Timeout=300,
@@ -187,7 +200,7 @@ class ElkTemplate(Template):
                     Protocol="HTTP",
                 ),
             ],
-            SecurityGroups=[Ref(self.common_security_group), Ref(self.elastic_sg)],
+            SecurityGroups=[self.common_security_group, Ref(self.elastic_sg)],
             HealthCheck=elb.HealthCheck(
                 Target=Join("", ["HTTP:", "9200", "/"]),
                 HealthyThreshold="3",
@@ -204,7 +217,7 @@ class ElkTemplate(Template):
         self.launch_config = self.add_resource(autoscaling.LaunchConfiguration('ElasticSearchers' + 'LaunchConfiguration',
                 ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
                 InstanceType='t2.micro',
-                SecurityGroups=[Ref(self.common_security_group), Ref(self.elastic_sg), Ref(self.elastic_internal_sg)],
+                SecurityGroups=[self.common_security_group, Ref(self.elastic_sg), Ref(self.elastic_internal_sg)],
                 KeyName=Ref(self.parameters['ec2Key']),
                 AssociatePublicIpAddress=False,
                 InstanceMonitoring=False,
@@ -218,7 +231,7 @@ class ElkTemplate(Template):
             MaxSize=1,
             MinSize=1,
             DesiredCapacity=1,
-            VPCZoneIdentifier=self.subnets['private'],
+            VPCZoneIdentifier=self.subnets['private'][self.private_subnet_layer],
             TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
             LoadBalancerNames=[Ref(self.elasticsearch_elb)],
             Tags=[
@@ -231,7 +244,7 @@ class ElkTemplate(Template):
         self.logstash_sg = self.add_resource(ec2.SecurityGroup(
             'logstashSecurityGroup',
             GroupDescription='For logstash egress to elasticsearch',
-            VpcId=Ref(self.vpc_id),
+            VpcId=self.vpc_id,
             SecurityGroupEgress=[ec2.SecurityGroupRule(
                         FromPort='9200',
                         ToPort='9200',
@@ -246,7 +259,7 @@ class ElkTemplate(Template):
         self.logstash_launch_config = autoscaling.LaunchConfiguration('Logstashers' + 'LaunchConfiguration',
             ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
             InstanceType='t2.micro',
-            SecurityGroups=[Ref(self.common_security_group), Ref(self.logstash_sg)],
+            SecurityGroups=[self.common_security_group, Ref(self.logstash_sg)],
             KeyName=Ref(self.parameters['ec2Key']),
             AssociatePublicIpAddress=False,
             InstanceMonitoring=False,
@@ -260,7 +273,7 @@ class ElkTemplate(Template):
             MaxSize=1,
             MinSize=1,
             DesiredCapacity=1,
-            VPCZoneIdentifier=self.subnets['private'],
+            VPCZoneIdentifier=self.subnets['private'][self.private_subnet_layer],
             TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
             Tags=[
                 Tag('stage', 'dev', True),
@@ -272,7 +285,7 @@ class ElkTemplate(Template):
         self.kibana_ingress_sg = self.add_resource(ec2.SecurityGroup(
             'kibanaIngressSecurityGroup',
             GroupDescription='For kibana ingress',
-            VpcId=Ref(self.vpc_id),
+            VpcId=self.vpc_id,
             SecurityGroupEgress=[
                 ec2.SecurityGroupRule(
                     FromPort='5601',
@@ -304,7 +317,7 @@ class ElkTemplate(Template):
             AccessLoggingPolicy=elb.AccessLoggingPolicy(
                 Enabled=False,
             ),
-            Subnets=self.subnets['public'],  # should be from networkbase
+            Subnets=self.subnets['public'][self.public_subnet_layer],  # should be from networkbase
             ConnectionDrainingPolicy=elb.ConnectionDrainingPolicy(
                 Enabled=True,
                 Timeout=300,
@@ -317,7 +330,7 @@ class ElkTemplate(Template):
                     Protocol="HTTP",
                 ),
             ],
-            SecurityGroups=[Ref(self.common_security_group), Ref(self.kibana_ingress_sg)],
+            SecurityGroups=[self.common_security_group, Ref(self.kibana_ingress_sg)],
             HealthCheck=elb.HealthCheck(
                 Target=Join("", ["HTTP:", "81", "/"]),
                 HealthyThreshold="3",
@@ -334,7 +347,7 @@ class ElkTemplate(Template):
         self.kibana_launch_config = autoscaling.LaunchConfiguration('Kibana' + 'LaunchConfiguration',
             ImageId=FindInMap('RegionMap', Ref('AWS::Region'), ami_id),
             InstanceType='t2.micro',
-            SecurityGroups=[Ref(self.common_security_group), Ref(self.elastic_sg), Ref(self.kibana_ingress_sg)],
+            SecurityGroups=[self.common_security_group, Ref(self.elastic_sg), Ref(self.kibana_ingress_sg)],
             KeyName=Ref(self.parameters['ec2Key']),
             AssociatePublicIpAddress=True,
             InstanceMonitoring=False,
@@ -347,7 +360,7 @@ class ElkTemplate(Template):
             MaxSize=1,
             MinSize=1,
             DesiredCapacity=1,
-            VPCZoneIdentifier=self.subnets['public'],
+            VPCZoneIdentifier=self.subnets['public'][self.public_subnet_layer],
             TerminationPolicies=['OldestLaunchConfiguration', 'ClosestToNextInstanceHour', 'Default'],
             LoadBalancerNames=[Ref(self.kibana_elb)],
             Tags=[Tag('Name', 'kibana', True)],
@@ -368,27 +381,8 @@ class ElkStackController(NetworkBase):
     Coordinates ELK stack actions (create and deploy)
     """
 
-    # When no config.json file exists a new one is created using the 'factory default' file.  This function
-    # augments the factory default before it is written to file with the config values required by an ElkTemplate
-    @staticmethod
-    def get_factory_defaults_hook():
-        return ElkTemplate.DEFAULT_CONFIG
-
-    # When the user request to 'create' a new ELK template the config.json file is read in. This file is checked to
-    # ensure all required values are present. Because ELK stack has additional requirements beyond that of
-    # EnvironmentBase this function is used to add additional validation checks.
-    @staticmethod
-    def get_config_schema_hook():
-        return ElkTemplate.CONFIG_SCHEMA
-
-    # Override the default create action to construct an ELK stack
-    def create_action(self):
-
-        # Create the top-level cloudformation template
-        self.initialize_template()
-
-        # Attach the NetworkBase: VPN, routing tables, public/private subnets, NAT instances
-        self.construct_network()
+    # Override the default create hook to construct an ELK stack
+    def create_hook(self):
 
         self.add_child_template(bastion.Bastion())
 
@@ -410,16 +404,15 @@ class ElkStackController(NetworkBase):
         # assigning values to each of the input parameters.
         self.add_child_template(elk_template)
 
-        # Serialize top-level template to file
-        self.write_template_to_file()
 
 
 def main():
     # This cli object takes the documentation comment at the top of this file (__doc__) and parses it against the
-    # command line arguments (sys.argv).  Supported commands are create and deploy. The deploy function works fine as
-    # is. ElkStackController overrides the create action to include an ELK stack as an additional template.
+    # command line arguments (sys.argv).  Supported commands are init, create, deploy, delete. The deploy function works fine as
+    # is. ElkStackController overrides the create hook to include an ELK stack as an additional template.
     cli = CLI(doc=__doc__)
-    ElkStackController(view=cli)
+    env_config = EnvConfig(config_handlers=[ElkTemplate])
+    ElkStackController(env_config=env_config, view=cli)
 
 if __name__ == '__main__':
     main()

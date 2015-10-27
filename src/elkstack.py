@@ -68,7 +68,7 @@ class ElkTemplate(Template):
 
     # Collect all the values we need to assemble our ELK stack
     def __init__(self, env_name, e_ami_id, l_ami_id, k_ami_id, public_subnet_layer='public', private_subnet_layer='private'):
-        super(ElkTemplate, self).__init__('ElkStack')
+        super(ElkTemplate, self).__init__('Elk')
         self.env_name = env_name
         self.e_ami_id = e_ami_id
         self.l_ami_id = l_ami_id
